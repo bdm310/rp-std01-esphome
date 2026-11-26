@@ -1,0 +1,10 @@
+# RP-STD01 dimmer with our own MCU firmware, on the unit's ESP32-C3. The device file sets the
+# substitutions.
+
+packages:
+  rp_std01_core: !include rp-std01-core.yaml
+  rp_std01_device: !include rp-std01-device.yaml
+
+api:
+  encryption:
+    key: ${api_key}

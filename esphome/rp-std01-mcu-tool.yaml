@@ -1,0 +1,13 @@
+# RP-STD01 MCU tool on the unit's ESP32-C3: installs and updates our MCU firmware in place of the
+# main configuration. The device and unit files set the substitutions, as for the main
+# configuration. It has no api:, so that Home Assistant does not show a different set
+# of entities for the unit.
+
+packages:
+  rp_std01_mcu_tool_core: !include rp-std01-mcu-tool-core.yaml
+  rp_std01_device: !include rp-std01-device.yaml
+
+esphome:
+  # Its own build folder, so building the tool and the main configuration in turn does not rebuild
+  # everything each time.
+  build_path: build/${name}-tool

@@ -1,0 +1,30 @@
+# Host-platform test build of the MCU tool: rp-std01-mcu-tool-core.yaml with the MCU UART on a
+# pseudo-terminal created by the fake MCU (fake_mcu --link ${mcu_port}).
+#
+# The host build has no power-on step (no STC install) and keeps its NVS values in RAM. The API is
+# only for the tests; the real tool has none.
+
+substitutions:
+  # ESPHome accepts only a port path of the form /dir/name.
+  mcu_port: /tmp/rpstd01-tool-host-mcu
+  api_port: "16054"
+
+esphome:
+  name: rpstd01-tool-host
+
+host:
+
+packages:
+  rp_std01_mcu_tool_core: !include ../rp-std01-mcu-tool-core.yaml
+
+uart:
+  id: mcu_uart
+  port: ${mcu_port}
+  baud_rate: 115200
+  rx_buffer_size: 2048
+
+logger:
+  level: DEBUG
+
+api:
+  port: ${api_port}

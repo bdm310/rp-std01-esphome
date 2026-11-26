@@ -1,0 +1,114 @@
+# ESPHome for the Martin Jerry RP-STD01 3-way dimmer kit, master unit, with the STOCK MCU firmware.
+#
+# Use this if you want ESPHome on the Wi-Fi chip but do not want to reflash the dimmer's MCU. It
+# takes the unit's names and secrets from local/unit.yaml and local/secrets.yaml, made as in
+# docs/install.md step 4; for another unit, copy this file within esphome/ and point the include
+# at that unit's file. To install from the factory Tasmota, from the repository root:
+#   esphome compile esphome/rp-std01-stock.yaml
+#   install/upload.sh <ip> esphome/.esphome/build/<name>/build/firmware.ota.bin
+# then replace Tasmota's partition table as in docs/install.md step 9, with this file in place of
+# esphome/local/dimmer.yaml.
+#
+# The MCU runs the lamp, buttons and LEDs, and talks Tuya serial to the ESP32 on GPIO20/21.
+#
+# The stock MCU reports only two datapoints:
+#   dp 1  power (bool)
+#   dp 2  brightness (int, 1..100)
+# There is nothing for the night light, buttons, add-on, thumbwheel or temperature, so this
+# config can only switch and dim the lamp. Limits of the stock firmware:
+#   - dp 2 = 1 or 2 makes the lamp sweep up and down instead of dimming, so the minimum is 3.
+#   - dp 2 = 100 is not full brightness; the paddle UP button goes brighter than any dp 2
+#     value. The brightest the MCU reports back is still 100.
+#   - The thumbwheel sets the overall range. At its dim end, dp 2 = 3 to 5 can flicker in
+#     bursts; raise min_value below if that happens.
+#   - The MCU does its own fades, so ESPHome transitions are off.
+
+packages:
+  unit: !include local/unit.yaml
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  min_version: 2026.10.1
+
+# DIO, as the factory firmware uses.
+esp32:
+  board: esp32-c3-devkitm-1
+  flash_mode: dio
+  framework:
+    type: esp-idf
+
+# GPIO20/21 are UART0 and go to the MCU, so the log goes to the USB port.
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: ${api_key}
+
+ota:
+  - platform: esphome
+    encryption:
+      key: ${api_key}
+    allow_partition_access: true
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  ap:
+    ssid: ${friendly_name} Fallback
+    password: ${fallback_ap_password}
+
+captive_portal:
+
+uart:
+  id: mcu_uart
+  rx_pin: GPIO20
+  tx_pin: GPIO21
+  baud_rate: 115200
+
+tuya:
+  id: mcu
+  uart_id: mcu_uart
+
+light:
+  - platform: tuya
+    id: dimmer_light
+    name: None
+    tuya_id: mcu
+    switch_datapoint: 1
+    dimmer_datapoint: 2
+    min_value: 3
+    max_value: 100
+    # Paddle changes count too: the MCU reports them.
+    restore_mode: RESTORE_DEFAULT_OFF
+
+binary_sensor:
+  - platform: status
+    name: Status
+
+sensor:
+  - platform: uptime
+    name: Uptime
+    update_interval: 60s
+    entity_category: diagnostic
+    disabled_by_default: true
+
+  - platform: wifi_signal
+    name: Wi-Fi Signal
+    update_interval: 60s
+    entity_category: diagnostic
+    disabled_by_default: true
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      entity_category: diagnostic
+      disabled_by_default: true
+
+button:
+  - platform: restart
+    name: Restart
+    entity_category: config

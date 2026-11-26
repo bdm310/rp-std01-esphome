@@ -1,0 +1,40 @@
+# Host-platform test build: rp-std01-core.yaml with the MCU UART on a pseudo-terminal created by
+# the fake MCU (fake_mcu --link ${mcu_port}).
+#
+# ESPHome's host platform always counts as a power-on (the rpstd01 component has no reset reason
+# there). With the environment variable RPSTD01_SOFT_REBOOT set when the binary
+# starts, the on_boot below calls set_soft_reboot(true) instead, so the reboot rule can be tested.
+
+substitutions:
+  # ESPHome accepts only a port path of the form /dir/name.
+  mcu_port: /tmp/rpstd01-host-mcu
+  api_port: "16053"
+  # A calibrated thumbwheel, so that Thumbwheel Use has an effect. The tests select Input Only.
+  thumbwheel_raw_a: "300"
+  thumbwheel_raw_b: "900"
+
+esphome:
+  name: rpstd01-host
+  on_boot:
+    - priority: 899
+      then:
+        - lambda: |-
+            if (getenv("RPSTD01_SOFT_REBOOT") != nullptr)
+              id(mcu_link)->link().set_soft_reboot(true);
+
+host:
+
+packages:
+  rp_std01_core: !include ../rp-std01-core.yaml
+
+uart:
+  id: mcu_uart
+  port: ${mcu_port}
+  baud_rate: 115200
+  rx_buffer_size: 2048
+
+logger:
+  level: DEBUG
+
+api:
+  port: ${api_port}

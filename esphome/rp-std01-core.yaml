@@ -1,0 +1,512 @@
+# RP-STD01 dimmer with our own MCU firmware: everything that does not depend on the chip. The
+# including file defines uart mcu_uart, to the MCU.
+#
+# Substitutions:
+#   thumbwheel_raw_a  thumbwheel raw reading at end A
+#   thumbwheel_raw_b  thumbwheel raw reading at end B
+#                     Equal values mean "not calibrated": the Thumbwheel sensor stays unknown and
+#                     the Dim End number sets the dim end, whatever Thumbwheel Use says.
+#   night_light_mode  first-boot value of the Night Light Mode select: "Light" or "On When Lamp
+#                     Off". After that the stored choice is used.
+
+substitutions:
+  thumbwheel_raw_a: "806"
+  thumbwheel_raw_b: "806"
+  night_light_mode: On When Lamp Off
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [rpstd01_link, rpstd01]
+
+rpstd01:
+  id: mcu_link
+  uart_id: mcu_uart
+  thumbwheel_raw_a: ${thumbwheel_raw_a}
+  thumbwheel_raw_b: ${thumbwheel_raw_b}
+  thumbwheel_use: thumbwheel_use
+  brightness_bar: brightness_bar
+  night_light_mode: night_light_mode
+  light: dimmer_light
+  dim_end: dim_end
+  bright_end: bright_end
+  fade_limit: fade_limit
+  addon_thresholds:
+    up_drive_off: addon_up_off
+    down_drive_off: addon_down_off
+    up_drive_on: addon_up_on
+    down_drive_on: addon_down_on
+  inputs:
+    onoff: onoff_button
+    up: up_button
+    down: down_button
+    addon_up: addon_up
+    addon_down: addon_down
+  text_sensors:
+    state: mcu_state
+    faults: mcu_faults
+    firmware: mcu_firmware
+    firmware_expected: mcu_firmware_expected
+    reset_cause: mcu_reset_cause
+
+esphome:
+  on_boot:
+    # After every entity has restored its state.
+    - priority: -100
+      then:
+        - script.execute: update_brightness_bar
+        # The restored lamp state does not fire on_turn_on/on_turn_off.
+        - script.execute: apply_night_light_mode
+
+script:
+  - id: update_brightness_bar
+    then:
+      - lambda: id(mcu_link)->update_brightness_bar();
+
+  - id: apply_night_light_mode
+    then:
+      - if:
+          condition:
+            lambda: return id(mcu_link)->night_light_follows_lamp();
+          then:
+            - if:
+                condition:
+                  lambda: return id(dimmer_light).remote_values.is_on();
+                then:
+                  - light.turn_off: night_light
+                else:
+                  - light.turn_on: night_light
+
+  - id: ramp
+    mode: restart
+    parameters:
+      step: float
+      button: binary_sensor::BinarySensor*
+    then:
+      - if:
+          condition:
+            lambda: return step > 0 && !id(dimmer_light).remote_values.is_on();
+          then:
+            - light.turn_on:
+                id: dimmer_light
+                brightness: 1%
+                transition_length: 0s
+      - while:
+          condition:
+            lambda: return button->state && id(dimmer_light).remote_values.is_on();
+          then:
+            - light.dim_relative:
+                id: dimmer_light
+                relative_brightness: !lambda return step;
+                transition_length: 100ms
+                brightness_limits:
+                  min_brightness: 1%
+            - delay: 100ms
+
+output:
+  - {platform: rpstd01, type: lamp, id: lamp_output}
+  - {platform: rpstd01, type: night_light, id: night_light_output}
+
+light:
+  - platform: monochromatic
+    id: dimmer_light
+    name: ""
+    output: lamp_output
+    gamma_correct: 1.0
+    default_transition_length: 1s
+    restore_mode: RESTORE_DEFAULT_ON
+    on_state:
+      - script.execute: update_brightness_bar
+    on_turn_on:
+      - script.execute: apply_night_light_mode
+    on_turn_off:
+      - script.execute: apply_night_light_mode
+
+  - platform: monochromatic
+    id: night_light
+    name: Night Light
+    output: night_light_output
+    gamma_correct: 1.0
+    default_transition_length: 0s
+    restore_mode: RESTORE_DEFAULT_OFF
+    initial_state:
+      brightness: 30%
+
+select:
+  - platform: template
+    id: night_light_mode
+    name: Night Light Mode
+    entity_category: config
+    options:
+      - Light
+      - On When Lamp Off
+    initial_option: ${night_light_mode}
+    optimistic: true
+    restore_value: true
+    on_value:
+      - script.execute: apply_night_light_mode
+
+  - platform: template
+    id: brightness_bar
+    name: Brightness Bar
+    entity_category: config
+    options:
+      - Level
+      - "Off"
+    initial_option: Level
+    optimistic: true
+    restore_value: true
+    on_value:
+      - script.execute: update_brightness_bar
+
+  - platform: template
+    id: thumbwheel_use
+    name: Thumbwheel Use
+    entity_category: config
+    options:
+      - Dim End
+      - Input Only
+    initial_option: Dim End
+    optimistic: true
+    restore_value: true
+
+number:
+  - platform: template
+    id: dim_end
+    name: Dim End
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 10
+    max_value: 90
+    step: 1
+    initial_value: 55
+    optimistic: true
+    restore_value: true
+    mode: box
+
+  - platform: template
+    id: bright_end
+    name: Bright End
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 1
+    max_value: 100
+    step: 1
+    initial_value: 47
+    optimistic: true
+    restore_value: true
+    mode: box
+
+  - platform: template
+    id: fade_limit
+    name: Fade Limit
+    entity_category: config
+    disabled_by_default: true
+    min_value: 0
+    max_value: 255
+    step: 1
+    initial_value: 48
+    optimistic: true
+    restore_value: true
+    mode: box
+
+  # Raw Ks; 1024 never matches.
+  - id: addon_up_off
+    name: Add-on UP Threshold Drive Off
+    initial_value: 618
+    <<: &threshold
+      platform: template
+      entity_category: config
+      disabled_by_default: true
+      min_value: 0
+      max_value: 1024
+      step: 1
+      optimistic: true
+      restore_value: true
+      mode: box
+  - id: addon_down_off
+    name: Add-on DOWN Threshold Drive Off
+    initial_value: 760
+    <<: *threshold
+  - id: addon_up_on
+    name: Add-on UP Threshold Drive On
+    initial_value: 346
+    <<: *threshold
+  - id: addon_down_on
+    name: Add-on DOWN Threshold Drive On
+    initial_value: 725
+    <<: *threshold
+
+# Buttons report the raw pin level, high when released, hence the invert filter (template binary
+# sensors have no `inverted:`). "ON-OFF" is the WiFi button's label on the board ("On/Off"), with "-"
+# because ESPHome reserves "/" in names.
+binary_sensor:
+  - id: onoff_button
+    name: ON-OFF Button
+    <<: &button
+      <<: &input
+        platform: template
+        entity_category: diagnostic
+        disabled_by_default: true
+      filters:
+        - invert:
+    on_multi_click:
+      - timing: &single
+          - ON for at most 750ms
+          - OFF for at least 333ms
+        invalid_cooldown: 1500ms
+        then:
+          - event.trigger:
+              id: onoff_event
+              event_type: single
+      - timing: &double
+          - ON for at most 750ms
+          - OFF for at most 333ms
+          - ON for at most 750ms
+        then:
+          - event.trigger:
+              id: onoff_event
+              event_type: double
+      - timing: &hold
+          - ON for at least 750ms
+        invalid_cooldown: 0ms
+        then:
+          - event.trigger:
+              id: onoff_event
+              event_type: hold
+          - light.toggle: night_light
+
+  - id: up_button
+    name: UP Button
+    <<: *button
+    on_multi_click:
+      - timing: *single
+        invalid_cooldown: 1500ms
+        then:
+          - event.trigger:
+              id: up_event
+              event_type: single
+          - light.turn_on: dimmer_light
+      - timing: *double
+        then:
+          - event.trigger:
+              id: up_event
+              event_type: double
+      - timing: *hold
+        invalid_cooldown: 0ms
+        then:
+          - event.trigger:
+              id: up_event
+              event_type: hold
+          - script.execute:
+              id: ramp
+              step: 0.05
+              button: !lambda return id(up_button);
+
+  - id: down_button
+    name: DOWN Button
+    <<: *button
+    on_multi_click:
+      - timing: *single
+        invalid_cooldown: 1500ms
+        then:
+          - event.trigger:
+              id: down_event
+              event_type: single
+          - light.turn_off: dimmer_light
+      - timing: *double
+        then:
+          - event.trigger:
+              id: down_event
+              event_type: double
+      - timing: *hold
+        invalid_cooldown: 0ms
+        then:
+          - event.trigger:
+              id: down_event
+              event_type: hold
+          - script.execute:
+              id: ramp
+              step: -0.05
+              button: !lambda return id(down_button);
+
+  - id: addon_up
+    name: Add-on UP
+    <<: *input
+    on_multi_click:
+      - timing: *single
+        invalid_cooldown: 1500ms
+        then:
+          - event.trigger:
+              id: addon_up_event
+              event_type: single
+          - light.turn_on: dimmer_light
+      - timing: *double
+        then:
+          - event.trigger:
+              id: addon_up_event
+              event_type: double
+      - timing: *hold
+        invalid_cooldown: 0ms
+        then:
+          - event.trigger:
+              id: addon_up_event
+              event_type: hold
+          - script.execute:
+              id: ramp
+              step: 0.05
+              button: !lambda return id(addon_up);
+
+  - id: addon_down
+    name: Add-on DOWN
+    <<: *input
+    on_multi_click:
+      - timing: *single
+        invalid_cooldown: 1500ms
+        then:
+          - event.trigger:
+              id: addon_down_event
+              event_type: single
+          - light.turn_off: dimmer_light
+      - timing: *double
+        then:
+          - event.trigger:
+              id: addon_down_event
+              event_type: double
+      - timing: *hold
+        invalid_cooldown: 0ms
+        then:
+          - event.trigger:
+              id: addon_down_event
+              event_type: hold
+          - script.execute:
+              id: ramp
+              step: -0.05
+              button: !lambda return id(addon_down);
+
+  - platform: template
+    id: mcu_problem
+    name: MCU Problem
+    device_class: problem
+    lambda: return id(mcu_link)->link().problem();
+
+  - platform: template
+    id: mcu_update_available
+    name: MCU Update Available
+    device_class: update
+    entity_category: diagnostic
+    lambda: return id(mcu_link)->link().update_available();
+
+event:
+  - platform: template
+    id: onoff_event
+    name: ON-OFF Button
+    device_class: button
+    event_types: &gestures [single, double, hold]
+  - platform: template
+    id: up_event
+    name: UP Button
+    device_class: button
+    event_types: *gestures
+  - platform: template
+    id: down_event
+    name: DOWN Button
+    device_class: button
+    event_types: *gestures
+  - platform: template
+    id: addon_up_event
+    name: Add-on UP
+    device_class: button
+    event_types: *gestures
+  - platform: template
+    id: addon_down_event
+    name: Add-on DOWN
+    device_class: button
+    event_types: *gestures
+
+sensor:
+  - platform: template
+    id: thumbwheel
+    name: Thumbwheel
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 500ms
+    lambda: return id(mcu_link)->link().wheel_percent();
+    filters:
+      - delta: 0.99
+
+  - platform: template
+    id: therm_resistance
+    internal: true
+    unit_of_measurement: ohm
+    update_interval: 5s
+    lambda: return id(mcu_link)->link().therm_resistance_ohms();
+
+  # B constant and reference are assumptions until the thermistor is measured.
+  - platform: ntc
+    id: mcu_temperature
+    name: Temperature
+    sensor: therm_resistance
+    entity_category: diagnostic
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25 C
+      reference_resistance: 100kOhm
+
+  - platform: template
+    id: mains_frequency
+    name: Mains Frequency
+    entity_category: diagnostic
+    device_class: frequency
+    state_class: measurement
+    unit_of_measurement: Hz
+    accuracy_decimals: 2
+    update_interval: 5s
+    lambda: return id(mcu_link)->link().mains_hz();
+
+  - platform: template
+    id: therm_raw
+    name: Thermistor Raw
+    entity_category: diagnostic
+    disabled_by_default: true
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: |-
+      auto &link = id(mcu_link)->link();
+      return link.have_status() ? (float) link.status().therm : NAN;
+
+  - platform: template
+    id: thumbwheel_raw
+    name: Thumbwheel Raw
+    entity_category: diagnostic
+    disabled_by_default: true
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: |-
+      auto &link = id(mcu_link)->link();
+      return link.have_status() ? (float) link.status().wheel : NAN;
+
+text_sensor:
+  - platform: template
+    id: mcu_state
+    name: MCU State
+    entity_category: diagnostic
+  - platform: template
+    id: mcu_faults
+    name: MCU Faults
+    entity_category: diagnostic
+  - platform: template
+    id: mcu_firmware
+    name: MCU Firmware
+    entity_category: diagnostic
+  - platform: template
+    id: mcu_firmware_expected
+    name: MCU Firmware Expected
+    entity_category: diagnostic
+  - platform: template
+    id: mcu_reset_cause
+    name: MCU Reset Cause
+    entity_category: diagnostic
+    disabled_by_default: true
+

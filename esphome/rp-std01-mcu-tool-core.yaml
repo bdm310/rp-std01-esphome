@@ -1,0 +1,82 @@
+# RP-STD01 MCU tool: everything that does not depend on the chip. The including file defines
+# uart mcu_uart, to the MCU.
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [rpstd01_link, rpstd01_tool]
+
+rpstd01_tool:
+  id: mcu_tool
+  uart_id: mcu_uart
+
+button:
+  - platform: template
+    id: mcu_update_application
+    name: Update Application Now
+    icon: mdi:update
+    on_press:
+      - lambda: id(mcu_tool)->tool().update_application();
+  - platform: template
+    id: mcu_install
+    name: Install at Next Power-On
+    icon: mdi:chip
+    on_press:
+      - lambda: id(mcu_tool)->tool().command(mcuflash::COMMAND_ARM);
+  - platform: template
+    id: mcu_cancel
+    name: Cancel Install
+    icon: mdi:cancel
+    on_press:
+      - lambda: id(mcu_tool)->tool().command(mcuflash::COMMAND_DISARM);
+
+sensor:
+  - platform: template
+    id: mcu_update_progress
+    name: Application Update Progress
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      static float last = -1.0f;
+      float progress = id(mcu_tool)->tool().update_progress_percent();
+      if (progress == last)
+        return {};
+      last = progress;
+      return progress;
+
+text_sensor:
+  - {platform: template, id: mcu_state, name: MCU State}
+  - {platform: template, id: mcu_update, name: Application Update}
+  - {platform: template, id: mcu_installed, name: MCU Installed}
+  - {platform: template, id: mcu_carried, name: MCU Carried by Tool}
+  - {platform: template, id: mcu_armed, name: MCU Install Armed}
+  - {platform: template, id: mcu_last_install, name: Last MCU Install}
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          auto &tool = id(mcu_tool)->tool();
+          using rpstd01::publish_if_changed;
+          char buf[512];
+          tool.state_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_state), buf);
+          tool.update_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_update), buf);
+          tool.installed_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_installed), buf);
+          tool.armed_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_armed), buf);
+  # The install record comes from NVS; the carried text never changes.
+  - interval: 5s
+    then:
+      - lambda: |-
+          auto &tool = id(mcu_tool)->tool();
+          using rpstd01::publish_if_changed;
+          char buf[512];
+          tool.carried_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_carried), buf);
+          tool.last_install_text(buf, sizeof(buf));
+          publish_if_changed(id(mcu_last_install), buf);

@@ -1,0 +1,53 @@
+# What a unit's main configuration and its MCU tool share, so that either can be uploaded over the
+# other and the unit keeps its name and address.
+#
+# Substitutions, set in the unit file that includes this one:
+#   name, friendly_name         node name, and the name Home Assistant shows
+#   wifi_ssid, wifi_password    your Wi-Fi
+#   api_key                     API key of the main configuration, and the OTA key of both
+#   fallback_ap_password        password for the fallback hotspot (8 characters or more)
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.10.1
+
+# DIO, as the factory firmware uses.
+esp32:
+  board: esp32-c3-devkitm-1
+  flash_mode: dio
+  framework:
+    type: esp-idf
+
+# GPIO20/21 are UART0 and go to the MCU, so the log goes to the USB port.
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+# The MCU sends about 2.4 kB/s; 2048 bytes cover a pause of about 0.85 s in the main loop.
+uart:
+  id: mcu_uart
+  rx_pin: GPIO20
+  tx_pin: GPIO21
+  baud_rate: 115200
+  rx_buffer_size: 2048
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  ap:
+    ssid: ${friendly_name} Fallback
+    password: ${fallback_ap_password}
+
+captive_portal:
+
+ota:
+  - platform: esphome
+    encryption:
+      key: ${api_key}
+    # Lets `esphome upload --partition-table` replace the factory Tasmota's partition table.
+    allow_partition_access: true
+
+# Its own firmware upload is off, because it would bypass the OTA encryption.
+web_server:
+  version: 3
+  ota: false

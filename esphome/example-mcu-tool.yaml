@@ -1,0 +1,5 @@
+# A unit's MCU tool. Copy it to esphome/local/dimmer-tool.yaml (docs/install.md, step 4).
+
+packages:
+  unit: !include unit.yaml
+  rp_std01_mcu_tool: !include ../rp-std01-mcu-tool.yaml

@@ -1,0 +1,10 @@
+# A unit's main configuration. Copy it to esphome/local/dimmer.yaml (docs/install.md, step 4).
+
+# The Thumbwheel Raw readings at end A and end B (docs/install.md, step 9).
+substitutions:
+  thumbwheel_raw_a: "1023"
+  thumbwheel_raw_b: "0"
+
+packages:
+  unit: !include unit.yaml
+  rp_std01: !include ../rp-std01.yaml
