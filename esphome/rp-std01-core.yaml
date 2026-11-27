@@ -2,17 +2,24 @@
 # including file defines uart mcu_uart, to the MCU.
 #
 # Substitutions:
-#   thumbwheel_raw_a  thumbwheel raw reading at end A
-#   thumbwheel_raw_b  thumbwheel raw reading at end B
-#                     Equal values mean "not calibrated": the Thumbwheel sensor stays unknown and
-#                     the Dim End number sets the dim end, whatever Thumbwheel Use says.
-#   night_light_mode  first-boot value of the Night Light Mode select: "Light" or "On When Lamp
-#                     Off". After that the stored choice is used.
+#   thumbwheel_raw_a    thumbwheel raw reading at end A
+#   thumbwheel_raw_b    thumbwheel raw reading at end B
+#                       Equal values mean "not calibrated": the Thumbwheel sensor stays unknown and
+#                       the Dim End number sets the dim end, whatever Thumbwheel Use says.
+#   night_light_mode    first-boot value of the Night Light Mode select: "Light" or "On When Lamp
+#                       Off". After that the stored choice is used.
+#   hold_time           a press at least this long is a hold, for the gesture events
+#   tap_time            a paddle press shorter than this is a tap: DOWN turns the lamp off. Longer, the
+#                       lamp stays where the press faded it.
+#   ramp_full_range_ms  how long, in ms, a hold takes to go across the whole brightness range
 
 substitutions:
   thumbwheel_raw_a: "806"
   thumbwheel_raw_b: "806"
   night_light_mode: On When Lamp Off
+  hold_time: 750ms
+  tap_time: 300ms
+  ramp_full_range_ms: "2000"
 
 external_components:
   - source:
@@ -59,6 +66,13 @@ esphome:
         # The restored lamp state does not fire on_turn_on/on_turn_off.
         - script.execute: apply_night_light_mode
 
+# The brightness a DOWN press started dimming from. A DOWN tap turns the lamp off with it, so the
+# next turn-on is not at the low end the dimming was heading for.
+globals:
+  - id: brightness_before_down
+    type: float
+    initial_value: "1.0"
+
 script:
   - id: update_brightness_bar
     then:
@@ -78,46 +92,48 @@ script:
                 else:
                   - light.turn_on: night_light
 
+  # One fade to the end of the range, at the rate ramp_full_range_ms sets, then held where it is when the
+  # button is released. Does nothing while the lamp is off.
   - id: ramp
     mode: restart
     parameters:
-      step: float
+      end: float
       button: binary_sensor::BinarySensor*
     then:
       - if:
           condition:
-            lambda: return step > 0 && !id(dimmer_light).remote_values.is_on();
+            light.is_on: dimmer_light
           then:
             - light.turn_on:
                 id: dimmer_light
-                brightness: 1%
-                transition_length: 0s
-      - while:
-          condition:
-            lambda: return button->state && id(dimmer_light).remote_values.is_on();
-          then:
-            - light.dim_relative:
-                id: dimmer_light
-                relative_brightness: !lambda return step;
-                transition_length: 100ms
-                brightness_limits:
-                  min_brightness: 1%
-            - delay: 100ms
+                brightness: !lambda return end;
+                transition_length: !lambda |-
+                  const float distance = std::fabs(end - id(dimmer_light).current_values.get_brightness());
+                  return static_cast<uint32_t>(distance * ${ramp_full_range_ms});
+            - wait_until:
+                lambda: return !button->state;
+            - if:
+                condition:
+                  lambda: |-
+                    const auto *lamp = id(dimmer_light);
+                    return lamp->is_transformer_active() && lamp->remote_values.is_on() &&
+                           lamp->remote_values.get_brightness() == end;
+                then:
+                  - light.turn_on:
+                      id: dimmer_light
+                      brightness: !lambda return id(dimmer_light).current_values.get_brightness();
+                      transition_length: 0s
 
 output:
-  - {platform: rpstd01, type: lamp, id: lamp_output}
   - {platform: rpstd01, type: night_light, id: night_light_output}
 
 light:
-  - platform: monochromatic
+  - platform: rpstd01
     id: dimmer_light
     name: ""
-    output: lamp_output
     gamma_correct: 1.0
-    default_transition_length: 1s
+    default_transition_length: 250ms
     restore_mode: RESTORE_DEFAULT_ON
-    on_state:
-      - script.execute: update_brightness_bar
     on_turn_on:
       - script.execute: apply_night_light_mode
     on_turn_off:
@@ -206,7 +222,7 @@ number:
     min_value: 0
     max_value: 255
     step: 1
-    initial_value: 48
+    initial_value: 230
     optimistic: true
     restore_value: true
     mode: box
@@ -253,7 +269,7 @@ binary_sensor:
         - invert:
     on_multi_click:
       - timing: &single
-          - ON for at most 750ms
+          - ON for at most ${hold_time}
           - OFF for at least 333ms
         invalid_cooldown: 1500ms
         then:
@@ -261,15 +277,15 @@ binary_sensor:
               id: onoff_event
               event_type: single
       - timing: &double
-          - ON for at most 750ms
+          - ON for at most ${hold_time}
           - OFF for at most 333ms
-          - ON for at most 750ms
+          - ON for at most ${hold_time}
         then:
           - event.trigger:
               id: onoff_event
               event_type: double
       - timing: &hold
-          - ON for at least 750ms
+          - ON for at least ${hold_time}
         invalid_cooldown: 0ms
         then:
           - event.trigger:
@@ -280,14 +296,34 @@ binary_sensor:
   - id: up_button
     name: UP Button
     <<: *button
+    on_press:
+      - if:
+          condition:
+            light.is_on: dimmer_light
+          then:
+            - script.execute:
+                id: ramp
+                end: 1.0
+                button: !lambda return id(up_button);
+          else:
+            - light.turn_on: dimmer_light
     on_multi_click:
+      # From off, the press turned the lamp on, and brightening starts once the press is no longer a tap.
+      # A ramp the press already started goes on at the same rate.
+      - timing:
+          - ON for at least ${tap_time}
+        invalid_cooldown: 0ms
+        then:
+          - script.execute:
+              id: ramp
+              end: 1.0
+              button: !lambda return id(up_button);
       - timing: *single
         invalid_cooldown: 1500ms
         then:
           - event.trigger:
               id: up_event
               event_type: single
-          - light.turn_on: dimmer_light
       - timing: *double
         then:
           - event.trigger:
@@ -299,14 +335,24 @@ binary_sensor:
           - event.trigger:
               id: up_event
               event_type: hold
-          - script.execute:
-              id: ramp
-              step: 0.05
-              button: !lambda return id(up_button);
 
   - id: down_button
     name: DOWN Button
     <<: *button
+    on_press:
+      - lambda: id(brightness_before_down) = id(dimmer_light).remote_values.get_brightness();
+      - script.execute:
+          id: ramp
+          end: 0.01
+          button: !lambda return id(down_button);
+    on_click:
+      - min_length: 0ms
+        max_length: ${tap_time}
+        then:
+          - light.control:
+              id: dimmer_light
+              state: false
+              brightness: !lambda return id(brightness_before_down);
     on_multi_click:
       - timing: *single
         invalid_cooldown: 1500ms
@@ -314,7 +360,6 @@ binary_sensor:
           - event.trigger:
               id: down_event
               event_type: single
-          - light.turn_off: dimmer_light
       - timing: *double
         then:
           - event.trigger:
@@ -326,22 +371,38 @@ binary_sensor:
           - event.trigger:
               id: down_event
               event_type: hold
-          - script.execute:
-              id: ramp
-              step: -0.05
-              button: !lambda return id(down_button);
 
   - id: addon_up
     name: Add-on UP
     <<: *input
+    on_press:
+      - if:
+          condition:
+            light.is_on: dimmer_light
+          then:
+            - script.execute:
+                id: ramp
+                end: 1.0
+                button: !lambda return id(addon_up);
+          else:
+            - light.turn_on: dimmer_light
     on_multi_click:
+      # From off, the press turned the lamp on, and brightening starts once the press is no longer a tap.
+      # A ramp the press already started goes on at the same rate.
+      - timing:
+          - ON for at least ${tap_time}
+        invalid_cooldown: 0ms
+        then:
+          - script.execute:
+              id: ramp
+              end: 1.0
+              button: !lambda return id(addon_up);
       - timing: *single
         invalid_cooldown: 1500ms
         then:
           - event.trigger:
               id: addon_up_event
               event_type: single
-          - light.turn_on: dimmer_light
       - timing: *double
         then:
           - event.trigger:
@@ -353,14 +414,24 @@ binary_sensor:
           - event.trigger:
               id: addon_up_event
               event_type: hold
-          - script.execute:
-              id: ramp
-              step: 0.05
-              button: !lambda return id(addon_up);
 
   - id: addon_down
     name: Add-on DOWN
     <<: *input
+    on_press:
+      - lambda: id(brightness_before_down) = id(dimmer_light).remote_values.get_brightness();
+      - script.execute:
+          id: ramp
+          end: 0.01
+          button: !lambda return id(addon_down);
+    on_click:
+      - min_length: 0ms
+        max_length: ${tap_time}
+        then:
+          - light.control:
+              id: dimmer_light
+              state: false
+              brightness: !lambda return id(brightness_before_down);
     on_multi_click:
       - timing: *single
         invalid_cooldown: 1500ms
@@ -368,7 +439,6 @@ binary_sensor:
           - event.trigger:
               id: addon_down_event
               event_type: single
-          - light.turn_off: dimmer_light
       - timing: *double
         then:
           - event.trigger:
@@ -380,10 +450,6 @@ binary_sensor:
           - event.trigger:
               id: addon_down_event
               event_type: hold
-          - script.execute:
-              id: ramp
-              step: -0.05
-              button: !lambda return id(addon_down);
 
   - platform: template
     id: mcu_problem

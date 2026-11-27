@@ -35,8 +35,8 @@ Later updates are in the same guide.
 
 | Button | Press | Hold |
 |---|---|---|
-| Paddle UP, add-on paddle UP | Lamp on, at its last brightness | Brighten until released |
-| Paddle DOWN, add-on paddle DOWN | Lamp off | Dim until released |
+| Paddle UP, add-on paddle UP | Lamp on at its last brightness; if already on, a little brighter | Brighten until released |
+| Paddle DOWN, add-on paddle DOWN | Lamp off (a press shorter than 300 ms) | Dim until released, starting at the press |
 | WiFi ("On/Off" on the board) | Nothing | Night light on or off |
 
 The add-on has only its paddle. The RESET button on the unit is not read by the firmware; it

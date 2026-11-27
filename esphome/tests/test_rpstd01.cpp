@@ -1253,6 +1253,12 @@ static void test_curve() {
   }
   for (float d = 300; d < 7400; d += 333)
     CHECK_NEAR(delay_for_power(power_share(d, 7680), 7680), d, 0.5);
+  CHECK_NEAR(power_for_level(0.0f, 0.03f, 0.9f), 0.03, 1e-5);
+  CHECK_NEAR(power_for_level(1.0f, 0.03f, 0.9f), 0.9, 1e-5);
+  CHECK_NEAR(std::cbrt(power_for_level(0.5f, 0.03f, 0.9f)), (std::cbrt(0.03) + std::cbrt(0.9)) / 2, 1e-5);
+  for (float level = 0.0f; level <= 1.0f; level += 0.1f)
+    CHECK_NEAR(level_for_power(power_for_level(level, 0.03f, 0.9f), 0.03f, 0.9f), level, 1e-4);
+  CHECK(level_for_power(0.5f, 0.4f, 0.4f) == 1.0f);
 }
 
 static void settle_firing_with_fixed_dim_end(Bench &b, StatusSpec &s) {
@@ -1282,7 +1288,7 @@ static void test_curve_ends_through_link() {
   b.step(&s);
   g = b.take(MSG_GATE);
   CHECK(g.size() == 1);
-  CHECK_NEAR(power_share(g16(g[0].payload, 0), 7680), (0.397 + 0.899) / 2, 0.002);
+  CHECK_NEAR(power_share(g16(g[0].payload, 0), 7680), std::pow((std::cbrt(0.397) + std::cbrt(0.899)) / 2, 3), 0.002);
 }
 
 static void test_curve_ends_clamped_to_firing_window() {

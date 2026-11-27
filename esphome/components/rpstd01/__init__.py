@@ -35,6 +35,9 @@ rpstd01_ns = cg.global_ns.namespace("rpstd01")
 LinkComponent = rpstd01_ns.class_("LinkComponent", cg.Component, uart.UARTDevice)
 Input = rpstd01_ns.enum("Input")
 
+CONF_RPSTD01_ID = "rpstd01_id"
+PARENT = {cv.GenerateID(CONF_RPSTD01_ID): cv.use_id(LinkComponent)}
+
 THRESHOLD_KEYS = (CONF_UP_DRIVE_OFF, CONF_DOWN_DRIVE_OFF, CONF_UP_DRIVE_ON, CONF_DOWN_DRIVE_ON)
 NUMBER_KEYS = (CONF_DIM_END, CONF_BRIGHT_END, CONF_FADE_LIMIT)
 # Each select, and the option of it that the C++ code acts on.

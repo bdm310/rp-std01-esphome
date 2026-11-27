@@ -96,8 +96,8 @@ def expected_target(level: float, half: int = HALF_60HZ, dim: float = DIM_END, b
         return 0
     d_dim = dim * half
     d_bright = max(bright * d_dim, EARLIEST_FIRE)
-    p_dim, p_bright = power_share(d_dim, half), power_share(d_bright, half)
-    want = p_dim + level * (p_bright - p_dim)
+    l_dim, l_bright = power_share(d_dim, half) ** (1 / 3), power_share(d_bright, half) ** (1 / 3)
+    want = (l_dim + level * (l_bright - l_dim)) ** 3
     lo, hi = 0.0, float(half)
     for _ in range(40):
         mid = (lo + hi) / 2
@@ -195,7 +195,7 @@ async def test_light_on_brightness_off(rig: Rig) -> None:
     mcu.log()
     await esp.light(True, 1.0, transition=1.0)
     s = rig.mcu_until(firing_at(expected_target(1.0)), 4)
-    assert s["limits"] == [48, 48] and s["relay"] == 1
+    assert s["limits"] == [INITIAL["fade_limit"]] * 2 and s["relay"] == 1
     log = mcu.log()
     gates = [int(e.split()[2]) for e in log if e.split()[1] == "gate"]
     # the transition starts near the dim end and only gets brighter (smaller delays)
@@ -457,35 +457,45 @@ async def test_onoff_single_and_double_are_events_only(rig: Rig) -> None:
     assert not esp.lamp()[0]
 
 
-async def test_up_single_turns_on_at_last_brightness(rig: Rig) -> None:
+async def test_up_press_turns_on_at_last_brightness_at_once(rig: Rig) -> None:
     await rig.start()
     esp, mcu = rig.esp, rig.mcu
     await esp.light(True, 0.6)
     await esp.light(False)
     mcu.cmd("press 1 120")
-    await until(lambda: esp.lamp() == (True, pytest.approx(0.6, abs=0.01)), 2, "on after UP single")
+    await until(lambda: esp.lamp() == (True, pytest.approx(0.6, abs=0.01)), 2, "on after UP press")
+    assert ("UP Button", "single") not in esp.events, "waited for the gesture instead of acting on the press"
     await until(lambda: ("UP Button", "single") in esp.events, 2, "UP Button single event")
     await past_gesture_cooldown()
     mcu.cmd("press 1 120")
     await until(lambda: esp.events.count(("UP Button", "single")) == 2, 2, "second UP single")
-    await asyncio.sleep(0.5)
-    assert esp.lamp() == (True, pytest.approx(0.6, abs=0.01)), "UP single while on changed the brightness"
+    b = esp.lamp()[1]
+    assert esp.lamp()[0] and 0.6 < b < 0.8, f"a tap while on should brighten a little and stay: {b}"
 
 
-async def test_down_hold_dims_and_down_single_turns_off(rig: Rig) -> None:
+async def test_down_dims_from_the_press_and_a_tap_turns_off(rig: Rig) -> None:
     await rig.start()
     esp, mcu = rig.esp, rig.mcu
     await esp.light(True, 0.6)
     rig.mcu_until(firing_at(expected_target(0.6)))
-    mcu.cmd("press 2 1600")
-    rig.mcu_until(held(2), 1)
+    mcu.cmd("press 2 600")
+    await until(lambda: esp.lamp()[1] == pytest.approx(0.01), 2, "dimming toward the low end")
+    assert held(2)(mcu.get()), "dimming waited for the release"
     rig.mcu_until(lambda s: not held(2)(s), 3)
-    await until(lambda: ("DOWN Button", "hold") in esp.events, 2, "DOWN Button hold event")
+    await until(lambda: esp.lamp()[1] > 0.01, 2, "held where released")
     b = esp.lamp()[1]
-    assert esp.lamp()[0] and 0.01 <= b < 0.6, f"DOWN hold should dim, never turn off: {b}"
+    assert esp.lamp()[0] and 0.1 < b < 0.55, f"a press past the tap time should dim, never turn off: {b}"
+    await asyncio.sleep(0.5)
+    assert esp.lamp() == (True, pytest.approx(b, abs=0.01)), "the release changed the lamp"
     await past_gesture_cooldown()
+    singles = esp.events.count(("DOWN Button", "single"))
     mcu.cmd("press 2 120")
-    await until(lambda: not esp.lamp()[0], 2, "off after DOWN single")
+    await until(lambda: not esp.lamp()[0], 2, "off after DOWN tap")
+    assert esp.events.count(("DOWN Button", "single")) == singles, "waited for the gesture instead of the release"
+    await past_gesture_cooldown()
+    mcu.cmd("press 1 120")
+    await until(lambda: esp.lamp()[0], 2, "on after UP tap")
+    assert esp.lamp()[1] == pytest.approx(b, abs=0.01), "a DOWN tap kept the low end it was dimming toward"
 
 
 async def test_down_double_while_off_is_an_event_only(rig: Rig) -> None:
@@ -498,17 +508,20 @@ async def test_down_double_while_off_is_an_event_only(rig: Rig) -> None:
     assert not esp.lamp()[0]
 
 
-async def test_up_hold_from_off_brightens_until_release(rig: Rig) -> None:
+async def test_up_hold_from_off_brightens_from_last_brightness_until_release(rig: Rig) -> None:
     await rig.start()
     esp, mcu = rig.esp, rig.mcu
-    mcu.cmd("press 1 1600")
+    await esp.light(True, 0.3)
+    await esp.light(False)
+    mcu.cmd("press 1 900")
     rig.mcu_until(held(1), 1)
     rig.mcu_until(lambda s: not held(1)(s), 3)
     await until(lambda: ("UP Button", "hold") in esp.events, 2, "UP Button hold event")
+    await until(lambda: esp.lamp()[1] < 1.0, 2, "held where released")
     b = esp.lamp()[1]
-    assert esp.lamp()[0] and 0.2 < b < 0.8, b
+    assert esp.lamp()[0] and 0.4 < b < 0.8, b
     await asyncio.sleep(0.5)
-    assert esp.lamp()[1] == pytest.approx(b, abs=0.06), "still brightening after the release"
+    assert esp.lamp() == (True, pytest.approx(b, abs=0.01)), "still brightening after the release"
 
 
 async def test_onoff_hold_toggles_night_light(rig: Rig) -> None:

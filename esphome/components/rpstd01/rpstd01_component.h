@@ -3,7 +3,9 @@
 #include <array>
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/light/light_output.h"
 #include "esphome/components/light/light_state.h"
+#include "esphome/components/light/transformers.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/output/float_output.h"
 #include "esphome/components/rpstd01/rpstd01.h"
@@ -69,9 +71,10 @@ class LinkComponent : public esphome::Component, public esphome::uart::UARTDevic
 
   Link &link() { return this->link_; }
 
-  // The brightness bar (LED1..LED5) for the lamp's state, if Brightness Bar shows the level.
+  // The brightness bar (LED1..LED5) for what the lamp shows now, mid-fade included, if Brightness Bar
+  // shows the level.
   void update_brightness_bar() {
-    const auto &v = this->light_->remote_values;
+    const auto &v = this->light_->current_values;
     const bool shown = this->brightness_bar_->current_option() == this->brightness_bar_level_;
     const uint8_t lit = brightness_bar_leds(shown && v.is_on(), v.get_brightness());
     for (uint8_t i = 0; i < BAR_LEDS; i++)
@@ -220,13 +223,34 @@ class LinkComponent : public esphome::Component, public esphome::uart::UARTDevic
       *reset_cause_{nullptr};
 };
 
-class LampOutput : public esphome::output::FloatOutput {
+// ESPHome's own fade eases in and out, so a long one (a paddle hold) would not ramp evenly.
+class ConstantRateTransition : public esphome::light::LightTransitionTransformer {
  public:
-  explicit LampOutput(LinkComponent *parent) : parent_(parent) {}
+  esphome::optional<esphome::light::LightColorValues> apply() override {
+    return esphome::light::LightColorValues::lerp(this->start_values_, this->end_values_, this->get_progress_());
+  }
+};
+
+class LampLight : public esphome::light::LightOutput {
+ public:
+  explicit LampLight(LinkComponent *parent) : parent_(parent) {}
+
+  esphome::light::LightTraits get_traits() override {
+    esphome::light::LightTraits traits;
+    traits.set_supported_color_modes({esphome::light::ColorMode::BRIGHTNESS});
+    return traits;
+  }
+  void write_state(esphome::light::LightState *state) override {
+    float level;
+    state->current_values_as_brightness(&level);
+    this->parent_->link().set_level(level);
+    this->parent_->update_brightness_bar();
+  }
+  std::unique_ptr<esphome::light::LightTransformer> create_default_transition() override {
+    return std::make_unique<ConstantRateTransition>();
+  }
 
  protected:
-  void write_state(float state) override { this->parent_->link().set_level(state); }
-
   LinkComponent *parent_;
 };
 

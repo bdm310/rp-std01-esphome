@@ -23,18 +23,18 @@ The MCU-side decisions are in [mcu-firmware-design.md](mcu-firmware-design.md). 
 - **MCU updates are not done here.** A separate ESPHome firmware for the same ESP32, the MCU tool
   ([mcu-tool.md](mcu-tool.md)), installs and updates the MCU firmware. This configuration only says
   when an update is available, and keeps quiet while the MCU is in update mode ("Update mode").
-- **The dimming curve is linear in power** between a dim end and a bright end.
+- **The dimming curve is even in perceived brightness** between a dim end and a bright end.
 
 Choices of behaviour someone else might make differently:
 
-- **Button and add-on actions**, in particular add-on DOWN single = off and WiFi button hold = night
-  light.
+- **Button and add-on actions**, in particular both paddles acting at the press, a DOWN tap = off,
+  and WiFi button hold = night light.
 - **LED meaning:** the brightness bar, B3 for faults, and the night light coming on when the lamp
   turns off.
 - **A fault turns the light off** once, when it starts; a turn-on during the fault waits for it
   to clear.
-- **A Fade Limit faster than the stock fade** (`LIMIT_BRIGHTER`, `LIMIT_DIMMER`), and a default
-  transition ("Transitions and the MCU's smoothing").
+- **A Fade Limit faster than the stock fade** (`LIMIT_BRIGHTER`, `LIMIT_DIMMER`), and a 250 ms
+  default transition at a constant rate ("Transitions and the MCU's smoothing").
 
 ## Partition table
 
@@ -52,7 +52,7 @@ enabled. Ranges and defaults of the numbers are in `rp-std01-core.yaml`.
 
 | Entity | Type | HA | Notes |
 |---|---|---|---|
-| (device name) | `light`, monochromatic | yes | The lamp |
+| (device name) | `light`, `rpstd01` | yes | The lamp; fades run at a constant rate |
 | Night Light | `light`, monochromatic | yes | B2, PWM |
 | Night Light Mode | `select` | config | Light / On When Lamp Off (default); first-boot default from the `night_light_mode` substitution |
 | Brightness Bar | `select` | config | Level (default) / Off |
@@ -79,7 +79,7 @@ enabled. Ranges and defaults of the numbers are in `rp-std01-core.yaml`.
 Raw sensors publish at most every few seconds, never at the status rate. The `rpstd01:` component
 (id `mcu_link`) runs the link each loop on its UART and applies Thumbwheel Use, Dim End, Bright End,
 Fade Limit and the add-on thresholds at start-up and on every change; lambdas reach the link
-through `id(mcu_link)->link()`. The lamp and night light are `rpstd01` outputs; the component sets
+through `id(mcu_link)->link()`. The lamp is an `rpstd01` light and the night light an `rpstd01` output; the component sets
 the LEDs itself, and reaches the entities it needs through the ids given under `rpstd01:`.
 
 MCU State is meant to be read. Automations should use MCU Update Available and MCU Problem, or
@@ -190,7 +190,9 @@ The light's output (0 to 1 after `gamma_correct`) becomes a firing delay in PCA 
    point.
 2. For a triac fired at angle `a = pi x d / H` (H, the half-period from the status) into a
    resistive load, the share of full power is `P(a) = 1 - a/pi + sin(2a) / (2 pi)`.
-3. The wanted power for output `s` is `P_dim + s x (P_bright - P_dim)`.
+3. The wanted power for output `s` is `(L_dim + s x (L_bright - L_dim))^3`, where `L = P^(1/3)`: CIE
+   lightness goes as the cube root of light, taking light as proportional to power, so equal steps of
+   `s` look equal. The start-up rule inverts it to show the MCU's target as a brightness.
 4. The delay is the `a` that gives it, found by `CURVE_BISECTION_STEPS` bisection steps when an
    input changes, then clamped to the MCU's limits.
 
@@ -211,9 +213,10 @@ So the stock ends give 40 to 90 % of full power, as stock. Toward end B (K = `K_
 the latest firing point) the dim end drops to about 3 %. Bright End can go down to the earliest
 firing point for full brightness.
 
-`gamma_correct: 1.0` is the default, so the slider sets power. A lamp's light rises faster than
-its power, so a gamma above 1 could look more even; with 1.0 it looked even with both lamps tried
-([../README.md, "Tested"](../README.md#tested)).
+`gamma_correct: 1.0` is the default, so the curve above is the only shaping. Light rises faster
+than power in an incandescent lamp, so there the bottom of the range rises a little faster than
+the cube root assumes. The exponent is in `power_for_level` and `level_for_power` in
+`rpstd01.h`.
 
 ### Thumbwheel
 
@@ -250,12 +253,17 @@ Only.
 
 ### Transitions and the MCU's smoothing
 
-ESPHome transitions change the target every loop (16 ms, about two half-cycles). The link sets
-both MCU limits to the Fade Limit, so with the default a transition slower than about 0.4 s
-between the default ends passes through unchanged, and a sudden change between them is spread over
-at most 0.4 s. The stock limits (`LIMIT_BRIGHTER`, `LIMIT_DIMMER`) would take 0.8 to 1.2 s and
-slow ESPHome's shorter transitions. The default transition (`default_transition_length` in
-`rp-std01-core.yaml`) is slower than 0.4 s, so it passes through unchanged.
+ESPHome transitions change the target every loop (16 ms, about two half-cycles). The lamp's
+transitions run at a constant rate (`ConstantRateTransition` in `rpstd01_component.h`), not
+ESPHome's ease in and out, so that a long one, such as a paddle hold, ramps evenly. The link sets
+both MCU limits to the Fade Limit. Its default lets the default transition (250 ms,
+`default_transition_length` in `rp-std01-core.yaml`) pass through unchanged between the default
+ends at 50 and 60 Hz: the steepest part of that fade on the curve above moves the delay by about
+155 counts per half-cycle at 60 Hz and 225 at 50 Hz. A sudden change is spread over the few
+half-cycles that takes. The stock limits (`LIMIT_BRIGHTER`, `LIMIT_DIMMER`) would take 0.8 to
+1.2 s. A deeper dim end (the thumbwheel toward end B) widens the range, and the steepest part of a
+250 ms fade is then slowed slightly. Fade Limit is a stored setting, so a unit that has stored an
+older default keeps it until it is changed or the unit is reset.
 
 ### On and off
 
@@ -299,9 +307,15 @@ count as a single press. Each gesture fires the button's `event` entity; the act
 top.
 
 The actions are in [../README.md, "Buttons"](../README.md#buttons). The WiFi button does not
-switch the lamp. The paddles on the unit and on the add-on act the same. Hold brightens from 1 % if
-the lamp is off, dims never below 1 %, and steps with `light.dim_relative` while the button is
-held (the step and its interval are in `rp-std01-core.yaml`).
+switch the lamp. The paddles on the unit and on the add-on act the same. The lamp actions do not
+wait for the gesture, so every press shows at once. DOWN starts dimming at the press; released
+before `tap_time` it turns the lamp off with the brightness it had before the press, released later
+it leaves the lamp where it is. UP turns the lamp on at its last brightness if it is off, and
+brightens once the press is longer than `tap_time`; if the lamp is on, it brightens from the press,
+so a tap brightens it a little. Dimming and brightening are one fade to the end of the range (1 %
+for DOWN) at the rate `ramp_full_range_ms` sets, held where it is on release, unless something else
+has changed the lamp meanwhile. DOWN does nothing to a lamp that is off. `hold_time` only sets the
+hold event. The brightness bar follows what the lamp shows, mid-fade included.
 
 ### Add-on
 

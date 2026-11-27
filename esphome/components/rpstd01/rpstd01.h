@@ -16,6 +16,11 @@ namespace rpstd01 {
 inline float power_share(float delay, float half);
 // Inverse of power_share by bisection; returns a delay in counts.
 inline float delay_for_power(float power, float half);
+// Lamp power for a level 0..1 between the dim-end and bright-end powers, in even steps of perceived
+// brightness: lightness goes as the cube root of light (CIE L*), taking light as proportional to power.
+inline float power_for_level(float level, float p_dim, float p_bright);
+// Inverse of power_for_level; 1 when the ends are equal.
+inline float level_for_power(float power, float p_dim, float p_bright);
 
 enum Input : uint8_t { IN_ONOFF = 0, IN_UP = 1, IN_DOWN = 2, IN_ADDON_UP = 3, IN_ADDON_DOWN = 4, IN_COUNT = 5 };
 
@@ -215,6 +220,19 @@ inline float delay_for_power(float power, float half) {
       hi = mid;
   }
   return 0.5f * (lo + hi);
+}
+
+inline float power_for_level(float level, float p_dim, float p_bright) {
+  const float l_dim = std::cbrt(p_dim);
+  const float lightness = l_dim + level * (std::cbrt(p_bright) - l_dim);
+  return lightness * lightness * lightness;
+}
+
+inline float level_for_power(float power, float p_dim, float p_bright) {
+  const float l_dim = std::cbrt(p_dim), l_bright = std::cbrt(p_bright);
+  if (l_bright == l_dim)
+    return 1.0f;
+  return (std::cbrt(power) - l_dim) / (l_bright - l_dim);
 }
 
 template<typename U> void Link::loop(U &uart, uint32_t now_ms) {
@@ -516,7 +534,7 @@ inline void Link::recompute_curve_() {
   float p_dim, p_bright;
   this->curve_ends_(half, &p_dim, &p_bright);
   this->clamp_half_ = this->have_status_ ? this->status_.half : 0;
-  this->curve_target_ = this->clamp_target_(delay_for_power(p_dim + this->level_ * (p_bright - p_dim), half));
+  this->curve_target_ = this->clamp_target_(delay_for_power(power_for_level(this->level_, p_dim, p_bright), half));
   this->dim_target_ = this->clamp_target_(delay_for_power(p_dim, half));
   this->curve_half_ = half;
   this->curve_dirty_ = false;
@@ -543,10 +561,7 @@ inline Adopt Link::take_adopt(float *level) {
     float half = s.half ? static_cast<float>(s.half) : this->curve_half_now_();
     float p_dim, p_bright;
     this->curve_ends_(half, &p_dim, &p_bright);
-    float lvl = 1.0f;
-    if (p_bright != p_dim)
-      lvl = (power_share(s.target, half) - p_dim) / (p_bright - p_dim);
-    lvl = detail::clampf(lvl, 0.001f, 1.0f);
+    float lvl = detail::clampf(level_for_power(power_share(s.target, half), p_dim, p_bright), 0.001f, 1.0f);
     this->set_level(lvl);
     if (level != nullptr)
       *level = lvl;
