@@ -477,7 +477,7 @@ static void test_first_install() {
   const uint32_t no_answer_ms = FIRST_LOOP_MS + CHECK_LISTEN_MS;
   CHECK(b.decided_ms >= no_answer_ms && b.decided_ms < no_answer_ms + 2 * LOOP_MS);
   CHECK(b.nvs.arm == CRC);
-  CHECK(has(b.text, "does not answer our protocol") && has(b.text, "at least 10 s"));
+  CHECK(has(b.text, "does not answer our protocol") && has(b.text, "press the RESET button"));
 
   b = start(false);  // a restart does not install
   CHECK(!b.attempted && b.state == mcuflash::CHECK_ARMED && programs == 0);
@@ -548,7 +548,7 @@ static void test_link_path() {
     CHECK(!b.attempted && b.state == mcuflash::CHECK_CURRENT && b.nvs.arm == 0);
     CHECK(b.text == c.text);
     CHECK(last_tool->updater().update_state() == c.upd);
-    CHECK(!has(b.text, "switch the dimmer's power off"));
+    CHECK(!has(b.text, "press the RESET button"));
   }
 }
 
@@ -974,7 +974,7 @@ static void test_image_pending_text() {
   image_pending = true;
   Boot b = start(false);
   char wait[80];
-  snprintf(wait, sizeof(wait), "Wait until this tool has run for %u s before power cycling. ",
+  snprintf(wait, sizeof(wait), "Wait until this tool has run for %u s before pressing RESET. ",
            (unsigned) SAFE_MODE_GOOD_AFTER_S);
   CHECK(b.text.rfind(wait, 0) == 0);
   CHECK(has(b.text, "Install armed"));

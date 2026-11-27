@@ -296,8 +296,8 @@ has no debug port.
 
 After a cold power-on the MCU runs STC's built-in bootloader before the user program and waits "tens
 or hundreds of milliseconds" for a sync pattern on P3.0/P3.1 (datasheet section 16.2.1). Those pins
-are the ESP32's serial link, and both chips share one supply, so a mains power cycle lets the ESP32
-catch it. Sending `stcgal`'s sync byte (0x7F, 2400 baud, 8E1) every 10 ms from a static constructor
+are the ESP32's serial link, and both chips share one supply, so a press of the RESET button lets the
+ESP32 catch it. Sending `stcgal`'s sync byte (0x7F, 2400 baud, 8E1) every 10 ms from a static constructor
 on the ESP32 got a valid status packet after about 20 to 22 sync bytes, about 213 to 218 ms after
 power-on, at every try on both tested units, and the stock firmware then started as normal. The MCU
 tool ([../docs/mcu-tool.md](../docs/mcu-tool.md)) uses this route. Both units gave the same model,

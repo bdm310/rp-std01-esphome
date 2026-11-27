@@ -11,9 +11,7 @@ dashboard) cannot do this install: it cannot run `install/upload.sh` (step 6).
 >
 > - Read ["Before you start"](../README.md#before-you-start) in the README. The point of no return
 >   is step 6. The other steps that must not be cut short are the partition table uploads in step 9.
-> - **Mains.** Every power cycle below is done at the circuit breaker that feeds the dimmer, never
->   by touching the device. Do not open the box while it is connected to mains: its low-voltage
->   side, including the serial header, is not isolated from mains
+> - **Mains.** Do not open the box while it is connected to mains: its low-voltage side, including the serial header, is not isolated from mains
 >   ([../hardware/README.md](../hardware/README.md)).
 > - **No password.** The web pages of the MCU tool and the main configuration have none: anyone on
 >   your network can use them while they run.
@@ -148,17 +146,14 @@ your router's list of clients under the new name. If it does not appear within 2
 ## 7. The tool's page
 
 Open `http://<ip>/`. On a factory unit, after a few seconds, MCU State says "The MCU does not
-answer our protocol (factory firmware, or none). Install armed: switch the dimmer's power off for
-at least 10 s, then on. ...". The install is armed.
+answer our protocol (factory firmware, or none). Install armed: press the RESET button. ...". The install is armed.
 
 While MCU State starts with "Wait until this tool has run for", wait until that sentence is gone,
 then go on to step 8.
 
 ## 8. The install
 
-1. Switch the dimmer off at the breaker **for at least 10 s**, then on, **in one clean movement**.
-   A switch that bounces gives two power-ons close together, and the second can cut the write
-   short.
+1. Press the RESET button once.
 2. The tool writes the MCU at the power-on, before it starts Wi-Fi, so the unit comes back on the
    network about 10 s later than after an ordinary restart. The lamp stays off.
 
@@ -169,13 +164,13 @@ Install starts with "Install OK".
 
 | Text | What to do |
 |---|---|
-| Install failed: no reply, timeout, framing or bad reply; or Install failed at calibrate, baud or handshake | Nothing on the MCU was changed. Power-cycle again, off for at least 10 s, one clean switch |
-| Install failed at erase, write, finish or options: ..., N bytes written; or Install failed: did not finish (the attempt was cut short) | The MCU's firmware may be incomplete, and the lamp does not work until an install completes. Power-cycle again: the tool installs at every power-on until a write completes. Do not install the main configuration yet |
+| Install failed: no reply, timeout, framing or bad reply; or Install failed at calibrate, baud or handshake | Nothing on the MCU was changed. Press RESET again |
+| Install failed at erase, write, finish or options: ..., N bytes written; or Install failed: did not finish (the attempt was cut short) | The MCU's firmware may be incomplete, and the lamp does not work until an install completes. Press RESET again: the tool installs at every power-on until a write completes. Do not install the main configuration yet |
 | Install refused: ... Nothing was changed | The MCU is not the expected chip, or a setting the install relies on differs from the factory one. Nothing was written, and trying again gives the same refusal on the same chip: stop, this unit needs a closer look ([../hardware/README.md, "Programming the MCU"](../hardware/README.md#programming-the-mcu)) |
 | Install written, but the new firmware did not answer | If MCU Installed and MCU State show our firmware, all is well. Otherwise follow MCU State: if the MCU still does not answer, the tool arms another install |
 
 After the automatic attempts fail several times in a row, MCU State says "... automatic attempts
-failed, so no more are made": press **Install at Next Power-On** and power-cycle again.
+failed, so no more are made": press **Install at Next Power-On** and press RESET again.
 
 ## 9. Moving to the main configuration
 
@@ -258,7 +253,7 @@ services* -> *Tasmota*), because it no longer answers.
    2. Open the tool's page and follow MCU State. If only the application is out of date, the tool
       updates it at once, with no power cycle, and then says "Application updated. Everything is
       current: install the main configuration." If the bootloader is out of date, it asks for a
-      power cycle, as in steps 7 and 8.
+      press of RESET, as in steps 7 and 8.
    3. Upload the main configuration again, as in 2.
 
 `--partition-table` is needed only the first time.
@@ -294,7 +289,7 @@ status the MCU reported.
 
 **"Link fault: the MCU answered after the install, but not now."** The new firmware answered right
 after the install, but the check then heard nothing. The tool does not install again. This points
-to the serial link between the chips. Restart the tool to check again (a power cycle with nothing
+to the serial link between the chips. Restart the tool to check again (a RESET press with nothing
 armed is safe). If it stays, the board needs a look with the box open: disconnect the dimmer from
 mains first ("Read first").
 

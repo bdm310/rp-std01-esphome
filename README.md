@@ -11,8 +11,8 @@ as entities.
 - **This is a one-way change.** The factory MCU firmware cannot be backed up or put back, and
   afterwards neither Tasmota nor any Tuya firmware can control the dimmer: only this project's
   ESPHome configuration can.
-- **The install is done over Wi-Fi with the box closed.** It does require a power cycle for the
-  first flash. Make sure you have easy control over device power.
+- **The install is done over Wi-Fi with the box closed.** The first flash needs a press of the
+  RESET button.
 - **The buttons work only while the ESP32 runs this project's main configuration.** The MCU has
   no local control, so while the ESP32 restarts, or runs the MCU tool during an install or
   update, the buttons do nothing.

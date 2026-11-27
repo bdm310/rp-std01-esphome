@@ -544,15 +544,14 @@ inline const char *Tool::reason_(char *buf, size_t size) const {
 
 inline void Tool::state_text(char *buf, size_t size) const {
   static const char POWER_CYCLE[] =
-      "switch the dimmer's power off for at least 10 s, then on. Wi-Fi then takes about 10 s longer "
-      "than after an ordinary restart to come back.";
+      "press the RESET button. Wi-Fi then takes about 10 s longer than after an ordinary restart to come back.";
   static const char TO_INSTALL[] =
-      "To install, press Install at Next Power-On, then switch the power off for at least 10 s and on.";
+      "To install, press Install at Next Power-On, then press the RESET button.";
   char reason_buf[128];
   const char *reason = this->reason_(reason_buf, sizeof(reason_buf));
   TextOut out{buf, size};
   if (this->image_pending_)
-    out.add("Wait until this tool has run for %u s before power cycling. ", (unsigned) SAFE_MODE_GOOD_AFTER_S);
+    out.add("Wait until this tool has run for %u s before pressing RESET. ", (unsigned) SAFE_MODE_GOOD_AFTER_S);
   switch (this->state_) {
     case mcuflash::CHECK_ASK:
       out.add("Checking...");
@@ -608,7 +607,7 @@ inline void Tool::state_text(char *buf, size_t size) const {
   if (this->update_refused_) {
     out.add(" Update Application Now cannot write this MCU: the update over the link needs the carried bootloader "
             "(v%u), and the MCU has v%u. Only an install through STC's bootloader replaces it: press Install at Next "
-            "Power-On, then power cycle.",
+            "Power-On, then press RESET.",
             this->img_.boot_version, this->boot_version_seen_());
   }
   if (this->nvs_.partial && this->state_ > mcuflash::CHECK_CURRENT)

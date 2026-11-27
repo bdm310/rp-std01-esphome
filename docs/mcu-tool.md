@@ -10,7 +10,7 @@ It writes the MCU in one of two ways:
 
 - **through our bootloader, over the link:** the application alone, at once, with no power cycle;
 - **through STC's ROM bootloader, at a mains power-on:** bootloader and application, after the
-  user switches the dimmer off and on.
+  user presses the RESET button.
 
 It chooses by itself when it starts, and its web page has buttons for the exceptions. It is also
 how a stock unit gets our firmware: it is uploaded from the factory Tasmota and installs the MCU
@@ -19,13 +19,13 @@ firmware at a power-on.
 ## Why a separate firmware
 
 - **Only STC's bootloader can replace our bootloader.** Our bootloader never rewrites itself, and
-  STC's runs only at a mains power-on, so a new bootloader needs code on the ESP32 that is ready
+  STC's runs only at a power-on, so a new bootloader needs code on the ESP32 that is ready
   at that moment.
 - **The main configuration would carry code it rarely uses:** the update, its recovery and the MCU
   image are needed a few times in the life of a unit.
 - **What it costs:** an application update takes two ESP32 OTA uploads (to the tool and back),
-  about a minute in all, instead of one button; a bootloader update also needs someone at the
-  breaker.
+  about a minute in all, instead of one button; a bootloader update also needs someone to press
+  RESET.
 
 ## Building
 
@@ -125,7 +125,7 @@ status, or at the end of that time:
 |---|---|---|
 | Our application, carried build, carried bootloader | Info frame | Does nothing: "Everything is current: install the main configuration." |
 | Our application, another build, carried bootloader | Info frame | **Updates the application through our bootloader at once** |
-| Our application, bootloader older than carried | Info frame | **Arms an install through STC's bootloader**, asks for a power cycle |
+| Our application, bootloader older than carried | Info frame | **Arms an install through STC's bootloader**, asks for a RESET press |
 | Our bootloader in update mode, not newer than carried, with a valid application | Boot status | Sends `MSG_BOOT_RUN` (up to `CHECK_RUN_TRIES` times) and decides by the application's info frame, as in the rows above and below. If it does not start, nothing is armed: its version is unknown |
 | Our bootloader in update mode, carried version, no valid application | Boot status | **Writes the carried application at once** |
 | Our bootloader in update mode, older version, no valid application | Boot status | Arms an install through STC's bootloader |
@@ -159,7 +159,7 @@ with no update running:
   no valid application) by the arming rules, as for an MCU that does not answer: an install
   through STC's bootloader is armed unless the rules hold it, and the page says why. Repeated
   failed writes over the link point at the link, and the STC install is the remaining way that
-  needs no box opening. The arming rules bound it, and it needs someone at the breaker.
+  needs no box opening. The arming rules bound it, and it needs someone to press RESET.
 
 While it works through our bootloader the tool changes nothing in NVS: Cancel Install, an install
 armed by hand, the count of failed attempts and the incomplete flag stay as they were. A check
