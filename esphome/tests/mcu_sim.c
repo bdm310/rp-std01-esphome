@@ -202,8 +202,9 @@ void hal_wdt_clear(void) {}
 void hal_take_inputs(hal_in_t *in) {
   in->edges = s.edges;
   in->half = mcu_sim.half_counts;
-  in->zo_valid = mcu_sim.zo_on && s.good >= ZO_GOOD_EDGES;
+  in->zo_valid = mcu_sim.zo_on && s.good >= 2 * ZO_GOOD_PERIODS; /* s.good counts half-cycles */
   in->gate_fault = 0;
+  in->zo_coasted = 0;
   in->therm_avg = s.therm.value;
   in->therm_ready = s.therm.ready;
   in->wheel_avg = s.wheel.value;

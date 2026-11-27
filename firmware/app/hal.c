@@ -141,18 +141,20 @@ void hal_take_inputs(hal_in_t XDATA *in) {
   volatile sched_t IDATA *s = &hal_sched;
   const volatile avg8_t IDATA *therm = &hal_therm, *wheel = &hal_wheel;
   uint16_t period;
-  uint8_t edges, zo_valid, fault;
+  uint8_t edges, zo_valid, fault, coasted;
   IRQ_OFF_ALL();
   edges = s->edges;
   period = s->phase.period;
   zo_valid = s->zo_valid;
   fault = s->fault;
   s->fault = 0;
+  coasted = s->phase.missed | s->phase.outside_phase;
   EA = 1;
   in->edges = edges;
   in->half = period >> 1;
   in->zo_valid = zo_valid;
   in->gate_fault = fault;
+  in->zo_coasted = coasted != 0;
   IRQ_OFF_TICK();
   in->therm_avg = therm->value;
   in->therm_ready = therm->ready;
@@ -240,10 +242,8 @@ uint32_t hal_build_id(void) {
 
 uint8_t hal_boot_version(void) { return *(const uint8_t CODE *) BOOT_VERSION_ADDR; }
 
-void hal_zo_isr(void) __interrupt(0) {
-  uint16_t now = pca_now();
-  uint16_t t;
-  uint8_t a = sched_edge(&hal_sched, now, PIN_ZO, fire_delay, &t);
+/* The gate action at the start of a half-cycle (sched_edge). */
+static void half_cycle_gate(uint8_t a, uint16_t t) {
   if (a == SA_NONE)
     return;
   GATE_FORCE_OFF();
@@ -255,16 +255,43 @@ void hal_zo_isr(void) __interrupt(0) {
   }
 }
 
+/* Module 1 as the reference timer, whose match starts the next half-cycle at phase.next_at.
+   Called only when the phase locks, after each match, and when Zo is lost: a correction from a Zo
+   edge never moves a match already set, so none is dropped. */
+static void reference_timer(void) {
+  CCAPM1 = 0;
+  CCON &= ~CCF1;
+  if (phase_locked(&hal_sched.phase)) {
+    CCAP1L = (uint8_t) hal_sched.phase.next_at;
+    CCAP1H = (uint8_t) (hal_sched.phase.next_at >> 8);
+    CCAPM1 = CCAPM_TIMER_INT;
+  }
+}
+
+void hal_zo_isr(void) __interrupt(0) {
+  uint16_t now = pca_now();
+  uint16_t t;
+  uint8_t a = sched_edge(&hal_sched, now, PIN_ZO, fire_delay, &t);
+  if (a == SA_NONE)
+    return;
+  half_cycle_gate(a, t);
+  reference_timer();
+}
+
 void hal_pca_isr(void) __interrupt(7) {
   uint16_t t;
-  if (!(CCON & CCF0))
-    return;
-  CCON &= ~CCF0;
-  if (sched_match(&hal_sched, PIN_SCR, &t) == SA_RELEASE) {
-    CCAP0L = (uint8_t) t;
-    CCAP0H = (uint8_t) (t >> 8);
-  } else {
-    GATE_FORCE_OFF();
+  if (CCON & CCF0) {
+    CCON &= ~CCF0;
+    if (sched_match(&hal_sched, PIN_SCR, &t) == SA_RELEASE) {
+      CCAP0L = (uint8_t) t;
+      CCAP0H = (uint8_t) (t >> 8);
+    } else {
+      GATE_FORCE_OFF();
+    }
+  }
+  if (CCON & CCF1) {
+    half_cycle_gate(sched_edge(&hal_sched, pca_now(), PHASE_TIMER, fire_delay, &t), t);
+    reference_timer();
   }
 }
 
@@ -302,6 +329,7 @@ void hal_tick_isr(void) __interrupt(1) {
   if (sched_zo_lost(&hal_sched)) {
     IRQ_OFF_ALL();
     sched_zo_reset(&hal_sched);
+    reference_timer();
     EA = 1;
   }
   /* Read before masking: if an interrupt delays the masking, the check runs as if a little

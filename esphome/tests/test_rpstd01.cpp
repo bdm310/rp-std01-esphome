@@ -1421,6 +1421,19 @@ static void test_button_low_at_first_frame_is_starting_level() {
   CHECK(events(c.link).empty());
 }
 
+static void test_zo_coasted_windows_counted() {
+  Bench b;
+  StatusSpec s;
+  b.run(30, &s);
+  CHECK_EQ(b.link.zo_coasted_windows(), 0u);
+  s.relay = S_RELAY | S_ZO_COASTED;
+  for (int i = 0; i < 3; i++)
+    b.step(&s);
+  s.relay = S_RELAY;
+  b.run(30, &s);
+  CHECK_EQ(b.link.zo_coasted_windows(), 3u);
+}
+
 static void test_addon() {
   Bench b;
   StatusSpec s;
@@ -2029,6 +2042,7 @@ int main() {
   RUN(test_buttons);
   RUN(test_button_backlog_every_frame_counts);
   RUN(test_button_low_at_first_frame_is_starting_level);
+  RUN(test_zo_coasted_windows_counted);
   RUN(test_addon);
   RUN(test_addon_held_at_first_frame_reported_held);
   RUN(test_addon_blanked_first_frame_reported_idle_then_classified);

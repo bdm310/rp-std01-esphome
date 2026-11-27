@@ -6,7 +6,7 @@
 
 /* High byte: link protocol version, raised for any change an older ESP32 side would get wrong
    (then the low byte starts again at 0). Low byte: release. */
-#define FW_VERSION 0x0001u
+#define FW_VERSION 0x0002u
 
 #define SYSCLK_HZ 11059200ul
 #define PCA_HZ 921600ul
@@ -19,12 +19,12 @@
 #error "PCA_US needs PCA_HZ to be a multiple of 100"
 #endif
 
-#define EDGE_MIN 6500u   /* closer edges are noise */
-#define EDGE_MAX 11000u  /* a longer gap restarts the count of good edges */
+#define EDGE_MIN 6500u   /* falling edges closer than this are noise */
 #define PERIOD_MIN ((unsigned) (PCA_HZ / 65u))
 #define PERIOD_MAX ((unsigned) (PCA_HZ / 45u))
-#define LOCK_WINDOW 300u  /* once locked, edges more than this early are noise */
-#define ZO_GOOD_EDGES 16u
+/* A power of 2: the period is the average of this many. */
+#define ZO_GOOD_PERIODS_LOG2 3u
+#define ZO_GOOD_PERIODS (1u << ZO_GOOD_PERIODS_LOG2)
 #define ZO_LOST_MS 20u
 
 #define RELEASE_BEFORE_EDGE PCA_US(933)
@@ -32,6 +32,20 @@
 #define EARLIEST_FIRE PCA_US(500)
 #define SCHED_MARGIN 100           /* a fire time closer than this to the edge is skipped */
 #define RELEASE_OVERDUE ((int) PCA_US(1000)) /* past the release time with the gate still armed */
+
+#define ZO_CAPTURE PCA_US(1200)
+#define PLL_PHASE_WINDOW PCA_US(200)
+#define PLL_PHASE_SHIFT 6u
+#define PLL_PERIOD_WINDOW PCA_US(50)
+#define PLL_PERIOD_SHIFT 3u
+_Static_assert(PLL_PHASE_SHIFT <= 8u, "the phase correction is on times with 8 fractional bits");
+_Static_assert(PLL_PHASE_WINDOW < ZO_CAPTURE, "the phase window is inside the capture window");
+#define ZO_FREQ_AGREE 3u
+#define ZO_MISSED_MAX 20u
+_Static_assert(ZO_MISSED_MAX * (unsigned long) PERIOD_MAX / 1000u < RELEASE_BEFORE_EDGE / 2u,
+               "drift over ZO_MISSED_MAX periods at 0.1 % must be under half the release margin");
+#define ZO_OUTSIDE_CAPTURE_MAX 3u
+#define ZO_OUTSIDE_PHASE_MAX 45u
 
 /* Default smoothing, counts per half-cycle (stock fade rates). */
 #define LIMIT_BRIGHTER 16u

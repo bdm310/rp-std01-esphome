@@ -71,6 +71,8 @@ class Link : public McuLink {
   float wheel_percent() const;
 
   float mains_hz() const;
+  // Statuses with S_ZO_COASTED, since boot.
+  uint32_t zo_coasted_windows() const { return this->zo_coasted_windows_; }
   float therm_resistance_ohms() const;  // NAN if no status, shorted or open
   const char *state_text() const;
   // With a hint while the application runs a supported protocol and is not the expected firmware.
@@ -117,6 +119,7 @@ class Link : public McuLink {
   // The last status showed a reported FAULT, and the MCU restarts seen up to it.
   bool status_fault_{false};
   uint32_t status_restarts_{0};
+  uint32_t zo_coasted_windows_{0};
   bool addon_init_{false};
   uint8_t last_app_slot_{NO_SLOT};
   uint16_t dim_target_{0};
@@ -235,6 +238,8 @@ inline void Link::handle_status_(const Status &s) {
     this->fault_event_ = true;
   this->status_fault_ = fault;
   this->status_restarts_ = this->mcu_restarts();
+  if (s.flags & S_ZO_COASTED)
+    this->zo_coasted_windows_++;
 
   if (this->gate_sent_) {
     bool clamped = (s.faults & F_CLAMPED) != 0;

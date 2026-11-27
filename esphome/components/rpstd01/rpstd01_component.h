@@ -89,7 +89,10 @@ class LinkComponent : public esphome::Component, public esphome::uart::UARTDevic
     for (Number *n : this->numbers_())
       n->add_on_state_callback(apply);
     this->apply_settings_();
-    this->set_interval(PANEL_EVERY_MS, [this]() { this->publish_panel_(); });
+    this->set_interval(PANEL_EVERY_MS, [this]() {
+      this->publish_panel_();
+      this->log_coasting_();
+    });
   }
 
   void loop() override {
@@ -150,6 +153,14 @@ class LinkComponent : public esphome::Component, public esphome::uart::UARTDevic
     this->link_.set_leds(OUTPUTS_B3, link.b3_on(this->blink_on_));
   }
 
+  void log_coasting_() {
+    const uint32_t windows = this->link_.zo_coasted_windows();
+    if (windows != this->coasted_logged_)
+      ESP_LOGD(TAG, "MCU timing ran on without a falling Zo edge near its prediction in %u status windows of the last %u ms",
+               (unsigned) (windows - this->coasted_logged_), (unsigned) PANEL_EVERY_MS);
+    this->coasted_logged_ = windows;
+  }
+
   void log_changes_() {
     const Link &link = this->link_;
     const bool update_available = link.update_available(), newer = link.firmware_newer();
@@ -196,6 +207,7 @@ class LinkComponent : public esphome::Component, public esphome::uart::UARTDevic
   Link link_;
   bool age_logged_{false}, update_mode_logged_{false};
   uint32_t restarts_logged_{0};
+  uint32_t coasted_logged_{0};
   bool blink_on_{false};
   uint16_t wheel_raw_a_, wheel_raw_b_;
   Number *dim_end_percent_, *bright_end_percent_, *fade_limit_counts_;

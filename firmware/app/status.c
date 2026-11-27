@@ -19,7 +19,8 @@ void status_build(uint8_t XDATA *out, const status_in_t XDATA *s, const window_t
      were none. */
   relay = s->relay ? 1 : 0;
   stale = w->relay_and != w->relay_or || w->relay_or != relay;
-  out[SF_FLAGS] = (relay ? S_RELAY : 0) | (stale ? S_KS_STALE : 0) | (s->starting ? S_STARTING : 0);
+  out[SF_FLAGS] = (relay ? S_RELAY : 0) | (stale ? S_KS_STALE : 0) | (s->starting ? S_STARTING : 0) |
+                  (s->coasted ? S_ZO_COASTED : 0);
   put16(out + SF_THERM, s->therm);
   put16(out + SF_WHEEL, s->wheel);
   out[SF_BOOT_ID] = s->boot_id;

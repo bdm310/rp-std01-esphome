@@ -67,7 +67,7 @@ static void test_buttons(void) {
 
 static void test_fields(void) {
   window_t w;
-  status_in_t s = {2, 0x10, 4000, 3990, 7680, 1, 512, 300, 0, 0x5C, 0x21, 200};
+  status_in_t s = {2, 0x10, 4000, 3990, 7680, 1, 512, 300, 0, 0x5C, 0x21, 200, 1};
   uint8_t out[STATUS_LEN];
   window_reset(&w);
   window_add_ks(&w, 1, 1);
@@ -80,7 +80,7 @@ static void test_fields(void) {
   CHECK_EQ(get16(out + 5), 3990);
   CHECK_EQ(get16(out + 7), 7680);
   CHECK_EQ(get16(out + 9), 1);
-  CHECK_EQ(out[11], 1);
+  CHECK_EQ(out[11], S_RELAY | S_ZO_COASTED);
   CHECK_EQ(get16(out + 12), 512);
   CHECK_EQ(get16(out + 14), 300);
   CHECK_EQ(out[16], 0x5C);

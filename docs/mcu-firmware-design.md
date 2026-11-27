@@ -126,8 +126,12 @@ flash**, and only with the gate and relay off.
   buffer and the main-loop state are in auxiliary RAM, which leaves the stack its room. The
   worst-case stack (the main loop's deepest path, plus the deepest path of an interrupt at each of
   the two priority levels) was counted from the generated code, and a test build on both units
-  that filled the stack at start-up and reported its high-water mark confirmed a good margin. The
-  `.map` files show what each program uses.
+  that filled the stack at start-up and reported its high-water mark confirmed a good margin.
+  The stack has 81 bytes. Counted from the generated code (push/pop balance along the deepest call
+  path, plus return addresses), the worst case is 62 bytes, plus the few bytes of SDCC's `memcpy`,
+  which the main loop calls with the tick masked. The high-water mark was measured with an earlier
+  build (97 bytes available, 64 counted), not yet with the phase lock (Zo handling). The `.map`
+  files show what each program uses.
 - Bootloader: the auxiliary RAM holds one frame of up to `BOOT_MAX_PAYLOAD` and a `BOOT_RX_RING`
   receive ring.
 
@@ -139,7 +143,8 @@ flash**, and only with the gate and relay off.
 - **PCA counter:** SYSclk/12 (`PCA_HZ`), **1.085 us** per count, 16 bits, wraps every 71.1 ms.
   A 60 Hz half-cycle is **7680 counts**.
   - Module 0 -> P3.5 (SCR): gate, high-speed output mode.
-  - Module 1: unused; its pin P3.6 stays an input.
+  - Module 1: the reference timer that starts every half-cycle (Zo handling), a software timer
+    without a pin output; P3.6 stays an input.
   - Module 2 -> P3.7 (B2): night light, 8-bit PWM at 3.6 kHz.
   - `P_SW1.CCP_S1:CCP_S0 = 01` (section 1.5.3), written explicitly because the datasheet gives
     two reset values for `P_SW1`.
@@ -152,8 +157,9 @@ flash**, and only with the gate and relay off.
 
 | Interrupt | Priority | Work |
 |---|---|---|
-| INT0 (Zo, both edges) | high | Time-stamp the edge, schedule the gate |
+| INT0 (Zo, both edges) | high | Time-stamp the edge; lock the phase, then correct it from falling edges |
 | PCA module 0 match | high | Re-arm for the release, then disarm |
+| PCA module 1 match | high | Start a half-cycle: schedule the gate, set the next match |
 | Timer 0 (1 ms) | low | Tick, ADC, input sampling, safety checks |
 | UART1 | low | Bytes in and out |
 
@@ -164,9 +170,10 @@ flash**, and only with the gate and relay off.
 In high-speed output mode the PCA flips the pin when the counter equals the compare value
 (section 11.3.3), so both gate edges come from hardware, accurate to one count. Each half-cycle:
 
-1. **Zo edge interrupt** (for an accepted edge): force P3.5 low and disarm module 0. Work out
-   `t_fire = reference + delay`. If it is at least `SCHED_MARGIN` counts after the edge (always,
-   for a valid delay), write `CCAP0L` then `CCAP0H` (section 11.3.2) and arm the module.
+1. **Half-cycle start** (the reference timer's match, or the Zo edge that completes locking):
+   force P3.5 low and disarm module 0. Work out `t_fire = reference + delay`. If it is at least
+   `SCHED_MARGIN` counts away (always, for a valid delay), write `CCAP0L` then `CCAP0H` (section
+   11.3.2) and arm the module.
 2. **Fire match:** hardware sets P3.5 high. The interrupt checks it and writes `t_release`.
 3. **Release match:** hardware sets P3.5 low. The interrupt also writes it low and disarms the
    module, so the latch cannot flip again when the counter wraps.
@@ -184,15 +191,16 @@ stuck main loop.
 | Item | Value | At 60 Hz | Source |
 |---|---|---|---|
 | Half-cycle | measured half-period | 8.333 ms | measured |
-| Gate release | half-period - `RELEASE_BEFORE_EDGE` after the reference | about 7.40 ms | stock |
+| Gate release | `RELEASE_BEFORE_EDGE` before the next half-cycle starts | about 7.40 ms | stock |
 | Latest firing point | half-period - `LATEST_BEFORE_EDGE` (release - 0.40 ms) | 7.00 ms | our margin |
 | Earliest firing point | `EARLIEST_FIRE` | 0.50 ms | our margin; stock went to 0.40 ms |
 | Relay on -> first gate | `RELAY_SETTLE_MS`, then the next half-cycle | | stock |
-| Target 0 -> relay off | `RELAY_OFF_DELAY_MS` after the second Zo edge since firing stopped | | stock: about 1 ms after the next edge |
+| Target 0 -> relay off | `RELAY_OFF_DELAY_MS` after the second half-cycle start since firing stopped | | stock: about 1 ms after the next edge |
 | Fault -> relay off | as for target 0, but at most `FAULT_RELAY_MS` after the fault | | ours |
 
-The release follows the **measured** half-period, so it stays about 0.93 ms before the next
-crossing whatever the clock error. Every delay is clamped to the firing range, so the stock bug of
+The release follows the **measured** period, so while the phase lock holds it stays about 0.93 ms
+before the next crossing whatever the clock error ("Zo handling" bounds how far the reference can be
+off before the lock lets go). Every delay is clamped to the firing range, so the stock bug of
 firing after the release point cannot happen.
 
 ### Delay smoothing
@@ -204,34 +212,79 @@ own. It exists because ESPHome updates the target only every loop (about 16 ms, 
 
 ### Jitter
 
-Under 2 us normally, a tenth of a stock fade step: one PCA count (1.09 us), under 1 us from Zo
-edge to counter read, and the short main-loop sections with interrupts off. Up to about 13 us when
-a Zo edge lands in the 1 ms tick's masked gate check (about 1 % of edges). The Zo interrupt keeps
-its own valid byte, so the main loop only copies plain bytes with interrupts off. A PCA interrupt
-cannot delay the Zo interrupt, because gate events are at least about 0.45 ms from any Zo edge.
-No noise edges on Zo were seen in many minutes on mains.
+Each half-cycle's reference is the reference timer's compare time, not the moment an interrupt
+reads the counter, so the gate times carry no interrupt latency, and the phase lock filters the
+jitter of Zo's edges. The fire time is written at the half-cycle's start, at least `EARLIEST_FIRE`
+before it is due, so a late interrupt (up to about 13 us, when the 1 ms tick's masked gate check
+delays it) does not move it. The Zo and PCA interrupts share the high priority, so one can delay
+the other by its whole run, probably tens of microseconds for the reference timer's (not measured).
+That only delays a Zo edge's time-stamp, and the phase lock averages the error out.
 
 ## Zo handling
 
-- The interrupt reads the PCA counter (high, low, high again to catch a carry), then P3.2 for the
-  edge direction.
-- **Noise:** an edge is ignored if it has the same level as the last accepted one, if it comes
-  less than `EDGE_MIN` after it, or, once locked, more than `LOCK_WINDOW` before the expected
-  crossing. A gap of more than `EDGE_MAX` restarts the count of good edges.
-- **Period:** rising edge to rising edge, filtered by 1/8 per new value (with fractional bits).
-  Only 45 to 65 Hz (`PERIOD_MIN` to `PERIOD_MAX`) is accepted.
-- **Reference (as stock):** a rising edge is its own reference; a falling-edge half-cycle uses
-  `last rising edge + period / 2`. This reproduces the stock firmware's 40 to 50 us later firing
-  in those half-cycles.
-- **Zo lost:** after more than `ZO_LOST_MS` with no edge, Zo is not good, and the 1 ms tick drops
-  the phase lock entirely: after such a gap the 16-bit edge timestamps cannot be trusted, because a
-  gap of a multiple of the counter's period looks like a normal half-cycle. While the relay drive is
-  on, Zo not good is a fault ("Relay sequence"). With the relay drive off it only shows in the
-  status (`F_ZO`).
-- **Start-up, and after a gap:** no gate until `ZO_GOOD_EDGES` good edges in a row (about
-  0.13 s).
-- In the gate simulation, noise near an edge moved the release by up to about 20 us; the gate
-  still stayed low for more than 0.8 ms before every crossing.
+A phase-locked reference times the half-cycles. Zo's falling edges keep it locked to mains; they
+do not start half-cycles themselves. Rising edges are not used. Constants are in `board.h`.
+
+- The Zo interrupt reads the PCA counter (high, low, high again to catch a carry), then P3.2 for
+  the edge direction. A falling edge less than `EDGE_MIN` after the last one taken is noise.
+- **Locking:** `ZO_GOOD_PERIODS` periods in a row, falling edge to falling edge (45 to 65 Hz,
+  `PERIOD_MIN` to `PERIOD_MAX`), each within `PLL_PERIOD_WINDOW` (50 us) of the one before (about
+  0.13 s), lock it. The period is their average, and the falling edge that completes them starts
+  the first half-cycle. A period out of range, or one that does not fit, starts a new run, so one
+  edge off by more than the window delays the lock rather than skewing the period or the phase.
+- **Half-cycles:** once locked, PCA module 1 starts every half-cycle at its match: a falling one at
+  the predicted falling edge, a rising one half a period later, and each sets the match for the
+  next. Times carry 8 fractional bits, so the period's fraction does not drift. The stock firmware
+  timed the rising half-cycle from the rising edge and the falling one from it plus half a period;
+  timed from the falling edge instead, the rising half-cycle now fires about 40 us (the difference
+  between Zo's high and low times) earlier.
+- **Corrections, from falling edges only:**
+  - within `ZO_CAPTURE` (1.2 ms) of the prediction, an edge shows Zo is there;
+  - within `PLL_PHASE_WINDOW` (0.2 ms), it also moves the following falling half-cycles by its
+    error >> `PLL_PHASE_SHIFT` (1/64, a time constant of about 1 s);
+  - if the time since the previous falling edge is within `PLL_PERIOD_WINDOW` of the filtered
+    period, the period moves 1/2^`PLL_PERIOD_SHIFT` (1/8) of the way to it. Frequency is measured
+    directly, so the phase needs no error to follow it; a glitch moves the period by at most a few
+    counts, and the next period moves it back;
+  - `ZO_FREQ_AGREE` (3) such periods in a row that agree with each other within
+    `PLL_PERIOD_WINDOW` but not with the filtered period are a new mains frequency, as a generator
+    can make: a disturbance of the edges' timing cannot keep their spacing. The period becomes
+    theirs and the reference that edge. Until then, a 0.5 % step puts the timing up to about
+    0.33 ms behind.
+
+  A falling edge's correction applies from the next falling half-cycle on, so a Zo edge never moves
+  a timer match already set, and none is ever dropped.
+- **Why:** with LED lamps, Zo's edges move with the load ([../hardware/README.md, "Zo with LED
+  lamps"](../hardware/README.md#zo-with-led-lamps)): rising edges drift more than 2 ms late for
+  seconds after a turn-off, falling edges are up to 1 ms off for about 0.5 s after the relay
+  closes, and with the relay closed and nothing firing the edges can stop. Mains does not move
+  like that. Timing each half-cycle from its own Zo edge follows these errors, and gave "mains
+  lost" faults at turn-on and turn-off. The narrow phase window ignores such disturbances; one
+  that straddles it moves the timing by at most `PLL_PHASE_WINDOW` >> `PLL_PHASE_SHIFT` (3 counts)
+  per period, about 0.1 ms over 0.5 s.
+- **Letting go:** the lock drops, and Zo is not good, when the edges show the reference cannot
+  be trusted. Each count is checked at the rising half-cycle start, half a period after the
+  falling one, when that half-cycle's falling edge has come, early or late, if it is there at all.
+  - `ZO_MISSED_MAX` (20) falling half-cycles in a row without a falling edge within the capture
+    window (0.33 s at 60 Hz). Meanwhile the half-cycles run on the last period, so mains drift is
+    the error; `board.h` checks it stays within half the release margin at a 0.1 % frequency
+    change.
+  - `ZO_OUTSIDE_CAPTURE_MAX` (3) in a row whose only falling edges were outside the capture window: Zo is back
+    after a gap, but not where the reference is, as when mains comes back at another phase. The
+    gate fires on the old timing for those periods, about 50 ms at 60 Hz.
+  - `ZO_OUTSIDE_PHASE_MAX` (45) falling edges in a row within the capture window but outside the phase
+    window: the edges are steady and the reference is not with them, as after a bad lock or once
+    falling edges that drifted slowly snap back. A disturbance of the edges looks the same, so this
+    waits for longer than the longest one measured (0.5 s): 0.75 s at 60 Hz. Meanwhile the gate
+    fires up to the capture window off.
+
+  While the relay drive is on, Zo not good is a fault ("Relay sequence"); with it off, it only
+  shows in the status (`F_ZO`). A status window in which the timing ran on without a falling edge
+  within the phase window has `S_ZO_COASTED` set.
+- **Before lock:** no half-cycles and no gate. More than `ZO_LOST_MS` without a Zo edge, or after a
+  loss without a half-cycle start, starts locking again: after such a gap the 16-bit edge
+  timestamps cannot be trusted, because a gap of a multiple of the counter's period looks like a
+  normal one.
 
 ## Relay sequence
 
@@ -243,7 +296,7 @@ current:
 | `OFF` | off | off | Target not 0, Zo good, no fault -> `SETTLE` |
 | `SETTLE` | on | off | Target 0 -> `OFF`; `RELAY_SETTLE_MS` passed -> `FIRING`, current delay = target |
 | `FIRING` | on | firing | Target 0 -> `STOPPING` |
-| `STOPPING` | on | off | `RELAY_OFF_DELAY_MS` after the second Zo edge since target 0 -> `OFF` |
+| `STOPPING` | on | off | `RELAY_OFF_DELAY_MS` after the second half-cycle start since target 0 -> `OFF` |
 | `FAULT` | on, then off | off | Relay off, cause gone **and** a target of 0 seen -> `OFF` |
 
 "A target of 0 seen" means the target was 0 when the fault started, or a target of 0 arrived since;
@@ -261,9 +314,10 @@ needs a target of 0.
 When the contacts actually move is not known (A3); `RELAY_SETTLE_MS` is copied from the stock
 firmware.
 
-**Why the second edge.** The main loop reads the Zo edge count, then clears the delay. A Zo edge
-in between still arms the gate with the old delay, and the triac then conducts until the next
-crossing. Waiting for the second edge after target 0 covers that half-cycle.
+**Why the second start.** The main loop reads the count of half-cycle starts, then clears the
+delay. A half-cycle that starts in between still arms the gate with the old delay, and the triac
+then conducts until the next crossing. Waiting for the second start after target 0 covers that
+half-cycle.
 
 **Turning off after a fault.** Over-temperature, a thermistor fault, a gate fault, or Zo lost or
 not good while the relay drive is on, all enter `FAULT`:
@@ -271,7 +325,8 @@ not good while the relay drive is on, all enter `FAULT`:
 - The delay is cleared in the same tick, and it is never set again while in `FAULT`, so no new
   gate pulse is armed. Only a pulse armed just before, as above, can still fire.
 - If firing had started (`FIRING`, `STOPPING`), the relay opens as after target 0, but at the latest
-  `FAULT_RELAY_MS` after the fault. The time limit is needed when Zo edges have stopped; it is
+  `FAULT_RELAY_MS` after the fault. The time limit is needed when Zo is lost and the half-cycle
+  starts have stopped; it is
   longer than one half-cycle at 45 Hz (11.1 ms), so a pulse fired before the fault has ended by
   then. This avoids opening the contacts under current, which wears them.
 - From `OFF` or `SETTLE` nothing has fired, and the relay opens at once.
@@ -311,8 +366,8 @@ These stay on the MCU so they work even if the ESP32 is wrong, crashed or reboot
 |---|---|
 | SCR and relay drive low at reset | The reset vector clears P3.5 and P3.4 and makes them push-pull before C start-up (`boot/vectors.asm`). After reset the pins are weak pull-ups (section 4.1); whether the power board pulls them low is not known (A5). |
 | Nothing runs on from a stray jump to 0x0000 | A real reset stops interrupts and the PCA; a jump to the reset vector would not. So the vector first clears `EA`, `CCAPM0` (before it clears P3.5, so module 0 cannot toggle it again) and the PCA run bit `CR`, and interrupts stay off until `hal_init()`. The bootloader uses neither; the application sets both up again. If the jump came from inside an interrupt, its priority level stays marked as in service, which blocks the 1 ms tick, so the watchdog resets the MCU within `WDT_TIMEOUT_MS`. |
-| No gate at or after the release point | Hardware release; delays clamped; every accepted Zo edge forces the gate low and disarms; the 1 ms tick forces it low outside the window. |
-| Gate off if Zo stops | No edge for more than `ZO_LOST_MS` while the relay drive is on -> `FAULT`. |
+| No gate at or after the release point | Hardware release; delays clamped; every half-cycle start forces the gate low and disarms; the 1 ms tick forces it low outside the window. |
+| Gate off if Zo stops or moves | The half-cycles run on the locked period while the falling edges are missing for fewer than `ZO_MISSED_MAX` periods, outside the capture window for fewer than `ZO_OUTSIDE_CAPTURE_MAX`, or outside the phase window for fewer than `ZO_OUTSIDE_PHASE_MAX` (Zo handling, "Letting go"); then the lock drops, which while the relay drive is on -> `FAULT`. |
 | Relay off after any fault | "Turning off after a fault", under "Relay sequence". |
 | Over-temperature | Fixed raw thresholds, below. Not settable over the link. |
 | Thermistor broken | Reading under `THERM_OPEN_SHORT_LOW` or over `THERM_OPEN_SHORT_HIGH` -> `FAULT`. |
@@ -445,7 +500,7 @@ Status payload:
 | `SF_CURRENT` | Current delay (0 unless firing) | u16 |
 | `SF_HALF` | Half-period, PCA counts (0 = Zo not good) | u16 |
 | `SF_KS_MIN` | Ks minimum (raw 0-1023; `KS_NO_SAMPLE` if none) | u16 |
-| `SF_FLAGS` | `S_RELAY`: relay drive on now. `S_KS_STALE`: the Ks minimum of this window may not belong to that drive state, because the drive changed during the window or after its last Ks sample, or because the window has no Ks sample. `S_STARTING`: the application has just started and its thermistor average is not ready yet | u8 |
+| `SF_FLAGS` | `S_RELAY`: relay drive on now. `S_KS_STALE`: the Ks minimum of this window may not belong to that drive state, because the drive changed during the window or after its last Ks sample, or because the window has no Ks sample. `S_STARTING`: the application has just started and its thermistor average is not ready yet. `S_ZO_COASTED`: the phase lock ran on without a falling Zo edge near its prediction during the window (Zo handling); an older ESP32 side ignores it | u8 |
 | `SF_THERM` | Thermistor raw, 8-reading average | u16 |
 | `SF_WHEEL` | Thumbwheel raw, 8-reading average | u16 |
 | `SF_BOOT_ID` | Boot ID | u8 |
@@ -626,8 +681,21 @@ simulated time, mains, inputs, UART rings and flash (the Zo interrupt is not mod
 counted); the ESP32 side's tests run against it. A gate simulation (`tests/test_sim.c`) runs the
 real `app_loop()` with a model of the PCA and the interrupts, and checks at every PCA count, at
 every position of the 1 ms tick against the Zo edges, that the gate is never high at or after the
-release point or across a Zo edge, that the relay never opens while the triac conducts, and that
-nothing fires after a fault.
+release point or across a mains crossing, that the relay never opens while the triac conducts, and
+that nothing fires after a fault. Its Zo can stop for a set time, carry noise glitches, or follow an
+LED load as measured on unit 1 (Zo handling, "Why"): no edges while the relay is closed and the
+triac has not conducted for a half-cycle, falling edges 1 ms late for 0.5 s after the relay closes,
+and rising edges drifting up to 2.5 ms late for 1.5 s after it opens. With that load the lamp turns
+on and off, quickly and as used, at every tick position without a fault and within every gate
+rule; with a phase window as wide as the capture window, those tests fail. Its falling edges carry
+15 us of jitter in the long runs and the LED-load ones, and mains can go and come back at another
+phase, after which the lamp must fault within 70 ms. The phase lock's own tests
+(`tests/test_phase.c`) drive it with edges and the reference timer in time order: locking, also
+with one edge off at the start, the end or inside the run; rising edges ignored; a falling
+disturbance outside the phase window ignored; small offsets, early and late, followed step by step;
+jitter never counted as missed; gaps shorter than `ZO_MISSED_MAX` periods, and loss at it; edges
+outside the capture window; a slow drift that snaps back, after which the lock lets go between 0.5
+and 0.8 s; mains back at another phase; and frequency changes of 0.1 % and 0.5 %.
 
 ## Assumptions to confirm
 

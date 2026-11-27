@@ -51,10 +51,12 @@ __sfr __at(0xDB) CCAPM1;
 __sfr __at(0xDC) CCAPM2;
 __sfr __at(0xE9) CL;
 __sfr __at(0xEA) CCAP0L;
+__sfr __at(0xEB) CCAP1L;
 __sfr __at(0xEC) CCAP2L;
 __sfr __at(0xF4) PCA_PWM2;
 __sfr __at(0xF9) CH;
 __sfr __at(0xFA) CCAP0H;
+__sfr __at(0xFB) CCAP1H;
 __sfr __at(0xFC) CCAP2H;
 
 __sbit __at(0x88) IT0;
@@ -115,6 +117,7 @@ __sbit __at(0xDE) CR;
 #define WDT_TIMEOUT_MS (12u * WDT_PRESCALE * 32768ul * 1000u / SYSCLK_HZ)
 #define CMOD_SYSCLK_12 0x00u
 #define CCF0 0x01u
+#define CCF1 0x02u
 #define CCON_CR 0x40u
 #define CCAPM_ECOM 0x40u
 #define CCAPM_MAT 0x08u
@@ -122,6 +125,7 @@ __sbit __at(0xDE) CR;
 #define CCAPM_PWM_MODE 0x02u
 #define CCAPM_ECCF 0x01u
 #define CCAPM_HSO_INT (CCAPM_ECOM | CCAPM_MAT | CCAPM_TOG | CCAPM_ECCF)
+#define CCAPM_TIMER_INT (CCAPM_ECOM | CCAPM_MAT | CCAPM_ECCF)
 #define CCAPM_PWM (CCAPM_ECOM | CCAPM_PWM_MODE)
 #define ADC_POWER 0x80u
 #define ADC_FLAG 0x10u

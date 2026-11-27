@@ -120,6 +120,9 @@ MCU tool.
   frames do not count. The log counts these, the application's return from update mode included.
   After a restart the status shows the lamp and the outputs off, and the usual resends restore them
   (below).
+- **Phase lock running on:** every 500 ms in which statuses showed `S_ZO_COASTED`, the log says,
+  at debug level, in how many windows the MCU's timing ran on without a falling Zo edge near its
+  prediction ([mcu-firmware-design.md, "Zo handling"](mcu-firmware-design.md#zo-handling)).
 - **Info:** it carries the boot ID of the start that sent it. The link uses the last info frame
   whose boot ID matches the current status; one that arrives before its start's first status (the
   MCU sends it first) counts from that status on. Nothing asks for it.
@@ -261,8 +264,8 @@ slow ESPHome's shorter transitions. The default transition (`default_transition_
   and the MCU fades up. This matches the stock "start dim and fade up", including after a power-on
   restore, an MCU reset, the return from update mode, and an HA turn-on with no transition.
 - **Off:** the transition brings the target to the dim end, then the link sends 0, and the MCU
-  stops firing and switches the relay off `RELAY_OFF_DELAY_MS` after the second Zo edge since
-  firing stopped.
+  stops firing and switches the relay off `RELAY_OFF_DELAY_MS` after the second half-cycle start
+  since firing stopped.
 
 ### Faults
 

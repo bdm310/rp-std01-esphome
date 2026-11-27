@@ -16,7 +16,7 @@ static XDATA uint8_t frame[STATUS_LEN + FRAME_OVERHEAD];
 _Static_assert(STATUS_LEN + INFO_LEN + 2 * FRAME_OVERHEAD <= HAL_TX_RING - 1,
                "a status and an info frame must fit the transmit ring");
 static XDATA uint16_t last_tick, last_rx_ms, last_status_ms, last_info_ms;
-static XDATA uint8_t last_edges, wdt_count_cleared, info_wanted, gate_fault_seen;
+static XDATA uint8_t last_edges, wdt_count_cleared, info_wanted, gate_fault_seen, coast_seen;
 
 /* The payload is built in place in frame: link_build copies it onto itself. */
 static void send(uint8_t type, uint8_t len) {
@@ -67,6 +67,7 @@ void app_init(void) {
   link_rx_init(&rx, rx_buf, APP_MAX_PAYLOAD);
   link_rx_types(&rx, MSG_GATE, MSG_UPDATE);
   gate_fault_seen = 0;
+  coast_seen = 0;
   last_tick = last_rx_ms = last_status_ms = last_info_ms = hal_ms();
   last_edges = 0;
   wdt_count_cleared = 0;
@@ -111,6 +112,8 @@ void app_loop(void) {
   }
   if (in.gate_fault)
     gate_fault_seen = 1;
+  if (in.zo_coasted)
+    coast_seen = 1;
   app_status.starting = in.therm_ready ? 0 : 1;
   stop_faults = safety_therm(&safety, in.therm_avg, in.therm_ready) | (in.gate_fault ? F_GATE : 0);
   if (!app_status.starting && app_gate.startup)
@@ -143,9 +146,11 @@ void app_loop(void) {
     app_status.relay = app_gate.relay;
     app_status.therm = in.therm_avg;
     app_status.wheel = in.wheel_avg;
+    app_status.coasted = coast_seen;
     status_build(frame + FRAME_HEADER, &app_status, &w);
     send(MSG_STATUS, STATUS_LEN);
     gate_fault_seen = 0;
+    coast_seen = 0;
     /* Besides the one at start-up, info frames go out only here, after a status, so the transmit
        ring never holds more than these two frames, which fit, and hal_uart_send() never drops a
        status. */

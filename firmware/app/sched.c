@@ -27,24 +27,27 @@ uint16_t sched_clamp(uint16_t delay, uint16_t half) REENTRANT {
 }
 
 uint8_t sched_edge(sched_t IDATA *s, uint16_t now, uint8_t level, uint16_t delay, uint16_t IDATA *t) {
-  uint16_t ref, half, fire;
+  uint16_t ref = 0, fire;
   uint8_t r = phase_edge(&s->phase, now, level, &ref);
   if (r == PHASE_IGNORED)
     return SA_NONE;
-  s->edges++;
-  s->zo_valid = phase_valid(&s->phase);
+  if (r == PHASE_SEEN) {
+    s->edges++;
+    return SA_NONE;
+  }
   s->gs = GS_IDLE;
-  if (r != PHASE_REF || delay == 0 || !s->zo_valid)
+  s->zo_valid = phase_locked(&s->phase);
+  if (r == PHASE_LOST)
     return SA_OFF;
-  half = s->phase.period >> 1;
+  s->edges++;
   /* Clamped again here: the delay may have been set against an older half-period. */
-  delay = sched_clamp(delay, half);
+  delay = sched_clamp(delay, s->phase.period >> 1);
   if (delay == 0)
     return SA_OFF;
   fire = ref + delay;
   if ((int16_t) (fire - now) < SCHED_MARGIN)
     return SA_OFF;
-  s->release_at = ref + half - RELEASE_BEFORE_EDGE;
+  s->release_at = s->phase.next_at - RELEASE_BEFORE_EDGE;
   s->gs = GS_WAIT_FIRE;
   *t = fire;
   return SA_ARM;

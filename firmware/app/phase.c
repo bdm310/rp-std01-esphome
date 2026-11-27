@@ -3,65 +3,125 @@
 
 void phase_init(phase_t IDATA *p) REENTRANT {
   p->period = 0;
-  p->period_x8 = 0;
+  p->period_x256 = 0;
   p->good = 0;
-  p->level = 0;
-  p->have_edge = 0;
-  p->have_rise = 0;
+  p->missed = 0;
+  p->outside_phase = 0;
+  p->outside_capture = 0;
+  p->flags = 0;
 }
 
-uint8_t phase_valid(const phase_t IDATA *p) { return p->good >= ZO_GOOD_EDGES && p->period != 0; }
+/* |a - b| without signed arithmetic, so it behaves the same with SDCC's 16-bit int. */
+#define DIFF(a, b) ((uint16_t) ((a) >= (b) ? (a) - (b) : (b) - (a)))
 
 uint8_t phase_edge(phase_t IDATA *p, uint16_t ts, uint8_t level, uint16_t IDATA *ref) {
-  uint16_t dt;
-  if (p->have_edge) {
-    dt = ts - p->last_edge;
-    /* Noise: the same level again (a glitch shorter than the interrupt latency), too soon
-       after the last edge, or, once locked, too early for the next crossing. A truly missed
-       edge shows up as a gap at the next accepted one. */
-    if (level == p->level || dt < EDGE_MIN ||
-        (phase_valid(p) && dt < (p->period >> 1) - LOCK_WINDOW)) {
-      return PHASE_IGNORED;
-    }
-    if (dt > EDGE_MAX)
-      p->good = 0;
-    else if (p->good != 0xFF)
-      p->good++;
-  }
-  p->have_edge = 1;
-  p->last_edge = ts;
-  p->level = level;
+  uint16_t d;
 
-  if (level) {
-    if (p->have_rise) {
-      dt = ts - p->last_rise;
-      if (dt < PERIOD_MIN || dt > PERIOD_MAX) {
-        p->good = 0;
-      } else if (p->period == 0) {
-        p->period_x8 = (uint32_t) dt << 3;
-        p->period = dt;
-      } else {
-        /* Moves 1/8 of the way to each new value. Written without a signed difference, so it
-           behaves the same with SDCC's 16-bit int. */
-        uint16_t cur = (uint16_t) (p->period_x8 >> 3);
-        if (dt >= cur)
-          p->period_x8 += dt - cur;
-        else
-          p->period_x8 -= cur - dt;
-        p->period = (uint16_t) ((p->period_x8 + 4) >> 3);
+  if (level == PHASE_TIMER) {
+    if (!phase_locked(p))
+      return PHASE_IGNORED;
+    *ref = p->next_at;
+    if (p->flags & PF_NEXT_FALLING) {
+      p->flags &= ~PF_NEXT_FALLING;
+      p->next_at = (uint16_t) ((p->fall_x256 + (p->period_x256 >> 1)) >> 8);
+      return PHASE_START;
+    }
+    /* Half a period after the falling half-cycle began, its falling edge has come, early or late,
+       if it is there at all, and the next one has not. */
+    if (p->flags & PF_FALL_SEEN) {
+      p->missed = 0;
+      p->outside_capture = 0;
+    } else {
+      p->missed++;
+      p->outside_capture = (p->flags & PF_OUTSIDE_CAPTURE_SEEN) ? p->outside_capture + 1 : 0;
+      if (p->missed >= ZO_MISSED_MAX || p->outside_capture >= ZO_OUTSIDE_CAPTURE_MAX) {
+        phase_init(p);
+        return PHASE_LOST;
       }
     }
-    p->have_rise = 1;
-    p->last_rise = ts;
-    if (p->period == 0)
-      return PHASE_NO_REF;
-    *ref = ts;
-    return PHASE_REF;
+    p->flags = (p->flags & ~(PF_FALL_SEEN | PF_OUTSIDE_CAPTURE_SEEN)) | PF_NEXT_FALLING;
+    p->fall_x256 += p->period_x256;
+    p->next_at = (uint16_t) (p->fall_x256 >> 8);
+    return PHASE_START;
   }
 
-  if (!p->have_rise || p->period == 0)
-    return PHASE_NO_REF;
-  /* As stock: the falling-edge half-cycle is timed from the rising edge plus half a period. */
-  *ref = p->last_rise + (p->period >> 1);
-  return PHASE_REF;
+  if (level)
+    return phase_locked(p) ? PHASE_IGNORED : PHASE_SEEN;
+  d = ts - p->last_fall;
+  if ((p->flags & PF_HAVE_FALL) && d < EDGE_MIN)
+    return PHASE_IGNORED;
+
+  if (!phase_locked(p)) {
+    if (!(p->flags & PF_HAVE_FALL) || d < PERIOD_MIN || d > PERIOD_MAX) {
+      p->good = 0;
+    } else if (p->good != 0 && DIFF(d, p->last_dt) <= PLL_PERIOD_WINDOW) {
+      p->good++;
+      p->fall_x256 += d;
+    } else {
+      p->good = 1;
+      p->fall_x256 = d;
+    }
+    p->last_dt = d;
+    p->last_fall = ts;
+    p->flags |= PF_HAVE_FALL;
+    if (p->good < ZO_GOOD_PERIODS)
+      return PHASE_SEEN;
+    p->period_x256 = p->fall_x256 << (8 - ZO_GOOD_PERIODS_LOG2);
+    p->period = (uint16_t) ((p->period_x256 + 128) >> 8);
+    p->good = 0;
+    p->missed = 0;
+    p->outside_phase = 0;
+    p->outside_capture = 0;
+    p->flags = PF_LOCKED | PF_FALL_SEEN | PF_HAVE_FALL;
+    p->fall_x256 = (uint32_t) ts << 8;
+    p->next_at = (uint16_t) ((p->fall_x256 + (p->period_x256 >> 1)) >> 8);
+    *ref = ts;
+    return PHASE_START;
+  }
+
+  /* The error from the predicted falling edge. Before the rising half-cycle fall_x256 is the last
+     falling reference, so a late edge is just after it; from then on it is the next one, so an
+     early edge is just before it. */
+  d = ts - (uint16_t) (p->fall_x256 >> 8);
+  if (d <= PLL_PHASE_WINDOW) {
+    p->fall_x256 += (uint32_t) d << (8 - PLL_PHASE_SHIFT);
+    p->outside_phase = 0;
+  } else if ((uint16_t) -d <= PLL_PHASE_WINDOW) {
+    p->fall_x256 -= (uint32_t) (uint16_t) -d << (8 - PLL_PHASE_SHIFT);
+    p->outside_phase = 0;
+  } else if (d <= ZO_CAPTURE || (uint16_t) -d <= ZO_CAPTURE) {
+    if (++p->outside_phase >= ZO_OUTSIDE_PHASE_MAX) {
+      phase_init(p);
+      return PHASE_LOST;
+    }
+  } else {
+    p->flags |= PF_OUTSIDE_CAPTURE_SEEN;
+    return PHASE_IGNORED;
+  }
+  p->flags |= PF_FALL_SEEN;
+
+  d = ts - p->last_fall;
+  if (d < PERIOD_MIN || d > PERIOD_MAX) {
+    p->good = 0;
+  } else if (DIFF(d, p->period) <= PLL_PERIOD_WINDOW) {
+    if (((uint32_t) d << 8) >= p->period_x256)
+      p->period_x256 += (((uint32_t) d << 8) - p->period_x256) >> PLL_PERIOD_SHIFT;
+    else
+      p->period_x256 -= (p->period_x256 - ((uint32_t) d << 8)) >> PLL_PERIOD_SHIFT;
+    p->period = (uint16_t) ((p->period_x256 + 128) >> 8);
+    p->good = 0;
+  } else if (DIFF(d, p->last_dt) <= PLL_PERIOD_WINDOW) {
+    if (++p->good >= ZO_FREQ_AGREE) {
+      p->period_x256 = (uint32_t) d << 8;
+      p->period = d;
+      p->fall_x256 = (uint32_t) ts << 8;
+      p->good = 0;
+      p->outside_phase = 0;
+    }
+  } else {
+    p->good = 0;
+  }
+  p->last_dt = d;
+  p->last_fall = ts;
+  return PHASE_IGNORED;
 }

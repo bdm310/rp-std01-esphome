@@ -10,10 +10,11 @@ _Static_assert(!(HAL_RX_RING & (HAL_RX_RING - 1)) && !(HAL_TX_RING & (HAL_TX_RIN
 
 /* Taken by the main loop once per tick. */
 typedef struct {
-  uint8_t edges;      /* accepted Zo edges, wrapping */
+  uint8_t edges;      /* half-cycle starts once locked, Zo edges before; wrapping */
   uint16_t half;      /* half-period, PCA counts */
   uint8_t zo_valid;   /* phase locked */
   uint8_t gate_fault; /* a gate fault since the last call */
+  uint8_t zo_coasted; /* for S_ZO_COASTED */
   uint16_t therm_avg;
   uint8_t therm_ready;
   uint16_t wheel_avg;

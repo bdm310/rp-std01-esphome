@@ -425,6 +425,24 @@ ESPHome configuration sets its own Fade Limit, and copies the start at the dim e
 | Turning off | fade to about 0.93 x K, stop firing, relay drive off about 1 ms later |
 | Half-cycle reference | both halves apparently timed from one Zo edge; timing each from its own edge would differ by about 45 us |
 
+## Zo with LED lamps
+
+Measured on unit 1 with six dimmable LED lamps on LO, 120 V and 60 Hz, with our MCU firmware: a
+build reported each Zo edge's offset from the time its phase lock predicted, separately for rising
+and falling edges, to the ESP32 log ([../docs/mcu-firmware-design.md, "Zo
+handling"](../docs/mcu-firmware-design.md#zo-handling)).
+
+| Situation | Rising edges | Falling edges |
+|---|---|---|
+| Steady, relay open or closed, any level from 1 to 100 % | within 17 us | within 17 us |
+| 1 to 2.5 s after a turn-off (relay open) | later and later, past 2.2 ms (the most the build could report), then back | within 0.1 ms |
+| 0.3 to 0.5 s after a turn-on, shortly after a turn-off | 2.2 ms or more late | from 0.4 ms early to 1 ms late |
+| Relay closed, nothing firing (an earlier session) | none | none |
+
+Mains does not move like that, so the detector does. It probably senses across the switch: with the
+triac off, the lamps' input capacitors hold LO near the line, which leaves it too little voltage.
+Not traced.
+
 ## Open questions
 
 1. **Thermistor:** its curve, and the stock over-temperature thresholds.

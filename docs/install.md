@@ -233,6 +233,11 @@ Tasmota's second-stage bootloader stays. It is harmless: ignore the advice to fl
   the Thumbwheel Raw sensor (press Show All on the unit's web page) at each end, put the reading
   at end A into `thumbwheel_raw_a` and the one at end B into `thumbwheel_raw_b` in
   `esphome/local/dimmer.yaml`, and upload again.
+- the dim end with your lamps: hold DOWN until the lamp is at its lowest level and leave it there
+  for a minute. Every lamp should stay lit and steady. If the lamp turns itself off, or MCU Faults
+  shows "mains lost", the dim end is deeper than these lamps can follow (step 11, "The lamp turns
+  itself off"): turn the thumbwheel toward end A, or with Thumbwheel Use set to Input Only raise
+  Dim End, until the lamp stays lit, then a little further.
 
 **Home Assistant:** *Settings* -> *Devices & services*. The unit is usually discovered as an
 ESPHome device; choose *Add* and enter the API key from `secrets.yaml`. If it is not discovered,
@@ -270,6 +275,22 @@ is newer than this tool's, so nothing is armed", or the main configuration's MCU
 "(MCU firmware newer than this configuration)". The build comes from an older checkout than the
 firmware on the MCU: update the checkout and build again. The tool's buttons (Update Application
 Now, Install at Next Power-On) force its firmware onto the MCU, also when it is older.
+
+**The lamp turns itself off, and MCU Faults shows "mains lost".** The MCU times the triac from the
+zero-cross signal, which it appears to read across the dimmer's switch, so the signal reaches it
+through the lamps ([../hardware/README.md, "Zo with LED
+lamps"](../hardware/README.md#zo-with-led-lamps)). LED lamps that stop conducting take the signal
+with them. When the MCU has seen no usable zero crossing with the relay closed, for 0.33 s with
+none at all or 0.75 s with them in the wrong place, it treats mains as lost and turns the lamp off rather than fire blind. A commercial
+dimmer would let the lamp flicker or drop out instead. The usual causes:
+
+- the dim end is deeper than the lamps can follow: raise it, as in step 9's dim end check;
+- the load is too light, for example a single small LED lamp: add lamps, or keep the dim end
+  higher. Commercial dimmers set a minimum lamp count for the same reason.
+
+If it happens at levels the lamps handle well, or with the lamp off, note the time and keep the
+device log (`esphome logs esphome/local/dimmer.yaml --device <ip>`): the faults are logged with the
+status the MCU reported.
 
 **"Link fault: the MCU answered after the install, but not now."** The new firmware answered right
 after the install, but the check then heard nothing. The tool does not install again. This points

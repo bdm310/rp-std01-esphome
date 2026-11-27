@@ -17,6 +17,7 @@ typedef struct {
   uint8_t boot_id;
   uint8_t leds;     /* outputs in use, as received in MSG_OUTPUTS */
   uint8_t night;
+  uint8_t coasted;  /* S_ZO_COASTED */
 } status_in_t;
 
 /* Writes STATUS_LEN bytes. */

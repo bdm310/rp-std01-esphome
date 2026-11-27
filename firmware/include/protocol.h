@@ -98,6 +98,7 @@
 #define S_RELAY 0x01u    /* relay drive on */
 #define S_KS_STALE 0x02u /* the Ks minimum may not belong to that drive state */
 #define S_STARTING 0x04u /* the application has just started: thermistor average not ready yet */
+#define S_ZO_COASTED 0x08u /* the phase lock ran on without a falling Zo edge near its prediction */
 
 /* At SF_FAULTS. */
 #define F_OVERTEMP 0x01u
